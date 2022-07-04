@@ -1,0 +1,13 @@
+[package]
+name = "memtest-vulkan"
+version = "0.1.0"
+edition = "2021"
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[dependencies]
+erupt = "0.16"
+inline-spirv = "0.1"
+structopt = "0.3"
+bytemuck = "1.4"
+
