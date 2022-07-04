@@ -1,6 +1,5 @@
 // This example currently uses the old and deprecated allocator.
 // TODO: Rewrite to use `gpu-alloc`
-#![allow(deprecated)]
 
 use erupt::{
     utils::{
@@ -8,6 +7,8 @@ use erupt::{
     },
     vk1_0, DeviceLoader, EntryLoader, InstanceLoader,
 };
+use gpu_alloc::{Config, GpuAllocator, Request, UsageFlags};
+use gpu_alloc_erupt::{device_properties, EruptMemoryDevice};
 use std::{
     convert::TryInto,
     ffi::{CStr, CString},
@@ -41,8 +42,8 @@ struct Buffer {
 unsafe impl bytemuck::Zeroable for Buffer {}
 unsafe impl bytemuck::Pod for Buffer {}
 
-fn main() {
-    let entry = EntryLoader::new().unwrap();
+fn main() -> Result<(), Box<dyn std::error::Error>> {
+    let entry = EntryLoader::new()?;
     println!(
         "compute example - Vulkan Instance {}.{}.{}",
         vk1_0::version_major(entry.instance_version()),
@@ -50,7 +51,7 @@ fn main() {
         vk1_0::version_patch(entry.instance_version())
     );
 
-    let instance = InstanceLoader::new(&entry, &vk1_0::InstanceCreateInfoBuilder::new(), None).unwrap();
+    let instance = InstanceLoader::new(&entry, &vk1_0::InstanceCreateInfoBuilder::new(), None)?;
 
     let (physical_device, queue_family, properties) =
         unsafe { instance.enumerate_physical_devices(None) }
@@ -90,7 +91,7 @@ fn main() {
         .queue_create_infos(&queue_create_info)
         .enabled_features(&features);
 
-    let device = DeviceLoader::new(&instance, physical_device, &create_info, None).unwrap();
+    let device = DeviceLoader::new(&instance, physical_device, &create_info, None)?;
     let queue = unsafe { device.get_device_queue(queue_family, 0, None) };
 
     let mut allocator =
@@ -101,8 +102,7 @@ fn main() {
             .map(|i| i as f32)
             .collect::<Vec<_>>()
             .as_slice()
-            .try_into()
-            .unwrap(),
+            .try_into()?,
     };
     let data_size = mem::size_of_val(&data) as vk1_0::DeviceSize;
 
@@ -170,7 +170,7 @@ fn main() {
     let create_info = vk1_0::ShaderModuleCreateInfoBuilder::new().code(&spv_code);
     let shader_mod = unsafe { device.create_shader_module(&create_info, None, None) }.unwrap();
 
-    let entry_point = CString::new("main").unwrap();
+    let entry_point = CString::new("main")?;
     let shader_stage = vk1_0::PipelineShaderStageCreateInfoBuilder::new()
         .stage(vk1_0::ShaderStageFlagBits::COMPUTE)
         .module(shader_mod)
@@ -244,4 +244,5 @@ fn main() {
     }
 
     println!("Exited cleanly");
+    Ok(())
 }
