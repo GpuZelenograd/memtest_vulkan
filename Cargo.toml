@@ -6,7 +6,11 @@ edition = "2021"
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
-erupt = "0.16"
-inline-spirv = { version = "0.1", features = ["glsl"] }
+erupt = { version = "0.16", default-features = false, features = ["loading"] }
+inline-spirv = { version = "0.1", default-features = false, features = ["glsl", "build-from-source"] }
 bytemuck = "1.4"
 
+[profile.release]
+strip = true  # Automatically strip symbols from the binary.
+lto = true
+codegen-units = 1
