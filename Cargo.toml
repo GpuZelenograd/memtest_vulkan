@@ -7,7 +7,6 @@ edition = "2021"
 
 [dependencies]
 erupt = "0.16"
-inline-spirv = "0.1"
-structopt = "0.3"
+inline-spirv = { version = "0.1", features = ["glsl"] }
 bytemuck = "1.4"
 

@@ -4,8 +4,6 @@
 
 use bytemuck::{Pod, Zeroable};
 use erupt::{
-    cstr,
-    extensions::ext_debug_utils,
     utils::{
         allocator::{Allocator, AllocatorCreateInfo, MemoryTypeFinder},
     },
@@ -13,17 +11,14 @@ use erupt::{
 };
 use std::{
     convert::TryInto,
-    ffi::{c_void, CStr, CString},
+    ffi::{CStr, CString},
     mem,
-    os::raw::c_char,
 };
-use structopt::StructOpt;
 use inline_spirv::inline_spirv;
 
-const TITLE: &str = "erupt_examples: compute";
-const LAYER_KHRONOS_VALIDATION: *const c_char = cstr!("VK_LAYER_KHRONOS_validation");
+const TITLE: &str = "compute example";
 const SHADER: &[u32] = inline_spirv!(r#"
-#version 450
+#version 460
 #extension GL_ARB_separate_shader_objects : enable
 
 #define SIZE 32
@@ -39,26 +34,6 @@ void main() {
 }
 "#, glsl, comp);
 
-unsafe extern "system" fn debug_callback(
-    _message_severity: ext_debug_utils::DebugUtilsMessageSeverityFlagBitsEXT,
-    _message_types: ext_debug_utils::DebugUtilsMessageTypeFlagsEXT,
-    p_callback_data: *const ext_debug_utils::DebugUtilsMessengerCallbackDataEXT,
-    _p_user_data: *mut c_void,
-) -> vk1_0::Bool32 {
-    eprintln!(
-        "{}",
-        CStr::from_ptr((*p_callback_data).p_message).to_string_lossy()
-    );
-
-    vk1_0::FALSE
-}
-
-#[derive(Debug, StructOpt)]
-struct Opt {
-    /// Use validation layers
-    #[structopt(short, long)]
-    validation_layers: bool,
-}
 
 #[derive(Copy, Clone, Debug)]
 #[repr(C)]
@@ -70,8 +45,6 @@ unsafe impl Zeroable for Buffer {}
 unsafe impl Pod for Buffer {}
 
 fn main() {
-    let opt = Opt::from_args();
-
     let entry = EntryLoader::new().unwrap();
     println!(
         "{} - Vulkan Instance {}.{}.{}",
@@ -90,39 +63,10 @@ fn main() {
         .engine_version(vk1_0::make_version(1, 0, 0))
         .api_version(vk1_0::make_version(1, 1, 0));
 
-    let mut instance_extensions = Vec::new();
-    let mut instance_layers = Vec::new();
-    let mut device_layers = Vec::new();
-    if opt.validation_layers {
-        instance_extensions.push(ext_debug_utils::EXT_DEBUG_UTILS_EXTENSION_NAME);
-        instance_layers.push(LAYER_KHRONOS_VALIDATION);
-        device_layers.push(LAYER_KHRONOS_VALIDATION);
-    }
-
     let create_info = vk1_0::InstanceCreateInfoBuilder::new()
-        .application_info(&app_info)
-        .enabled_extension_names(&instance_extensions)
-        .enabled_layer_names(&instance_layers);
+        .application_info(&app_info);
 
     let instance = InstanceLoader::new(&entry, &create_info, None).unwrap();
-    let messenger = if opt.validation_layers {
-        let create_info = ext_debug_utils::DebugUtilsMessengerCreateInfoEXTBuilder::new()
-            .message_severity(
-                ext_debug_utils::DebugUtilsMessageSeverityFlagsEXT::VERBOSE_EXT
-                    | ext_debug_utils::DebugUtilsMessageSeverityFlagsEXT::WARNING_EXT
-                    | ext_debug_utils::DebugUtilsMessageSeverityFlagsEXT::ERROR_EXT,
-            )
-            .message_type(
-                ext_debug_utils::DebugUtilsMessageTypeFlagsEXT::GENERAL_EXT
-                    | ext_debug_utils::DebugUtilsMessageTypeFlagsEXT::VALIDATION_EXT
-                    | ext_debug_utils::DebugUtilsMessageTypeFlagsEXT::PERFORMANCE_EXT,
-            )
-            .pfn_user_callback(Some(debug_callback));
-
-        unsafe { instance.create_debug_utils_messenger_ext(&create_info, None, None) }.unwrap()
-    } else {
-        Default::default()
-    };
 
     let (physical_device, queue_family, properties) =
         unsafe { instance.enumerate_physical_devices(None) }
@@ -160,8 +104,7 @@ fn main() {
 
     let create_info = vk1_0::DeviceCreateInfoBuilder::new()
         .queue_create_infos(&queue_create_info)
-        .enabled_features(&features)
-        .enabled_layer_names(&device_layers);
+        .enabled_features(&features);
 
     let device = DeviceLoader::new(&instance, physical_device, &create_info, None).unwrap();
     let queue = unsafe { device.get_device_queue(queue_family, 0, None) };
@@ -312,10 +255,6 @@ fn main() {
         device.destroy_descriptor_pool(Some(desc_pool), None);
         device.destroy_shader_module(Some(shader_mod), None);
         device.destroy_device(None);
-
-        if !messenger.is_null() {
-            instance.destroy_debug_utils_messenger_ext(Some(messenger), None);
-        }
 
         instance.destroy_instance(None);
     }
