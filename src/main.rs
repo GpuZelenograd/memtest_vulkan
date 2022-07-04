@@ -2,7 +2,6 @@
 // TODO: Rewrite to use `gpu-alloc`
 #![allow(deprecated)]
 
-use bytemuck::{Pod, Zeroable};
 use erupt::{
     utils::{
         allocator::{Allocator, AllocatorCreateInfo, MemoryTypeFinder},
@@ -14,10 +13,8 @@ use std::{
     ffi::{CStr, CString},
     mem,
 };
-use inline_spirv::inline_spirv;
 
-const TITLE: &str = "compute example";
-const SHADER: &[u32] = inline_spirv!(r#"
+const SHADER: &[u32] = inline_spirv::inline_spirv!(r#"
 #version 460
 #extension GL_ARB_separate_shader_objects : enable
 
@@ -41,32 +38,19 @@ struct Buffer {
     data: [f32; 21],
 }
 
-unsafe impl Zeroable for Buffer {}
-unsafe impl Pod for Buffer {}
+unsafe impl bytemuck::Zeroable for Buffer {}
+unsafe impl bytemuck::Pod for Buffer {}
 
 fn main() {
     let entry = EntryLoader::new().unwrap();
     println!(
-        "{} - Vulkan Instance {}.{}.{}",
-        TITLE,
+        "compute example - Vulkan Instance {}.{}.{}",
         vk1_0::version_major(entry.instance_version()),
         vk1_0::version_minor(entry.instance_version()),
         vk1_0::version_patch(entry.instance_version())
     );
 
-    let application_name = CString::new("compute").unwrap();
-    let engine_name = CString::new("erupt").unwrap();
-    let app_info = vk1_0::ApplicationInfoBuilder::new()
-        .application_name(&application_name)
-        .application_version(vk1_0::make_version(1, 0, 0))
-        .engine_name(&engine_name)
-        .engine_version(vk1_0::make_version(1, 0, 0))
-        .api_version(vk1_0::make_version(1, 1, 0));
-
-    let create_info = vk1_0::InstanceCreateInfoBuilder::new()
-        .application_info(&app_info);
-
-    let instance = InstanceLoader::new(&entry, &create_info, None).unwrap();
+    let instance = InstanceLoader::new(&entry, &vk1_0::InstanceCreateInfoBuilder::new(), None).unwrap();
 
     let (physical_device, queue_family, properties) =
         unsafe { instance.enumerate_physical_devices(None) }
