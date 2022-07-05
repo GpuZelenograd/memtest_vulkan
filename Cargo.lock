@@ -37,19 +37,20 @@ dependencies = [
 
 [[package]]
 name = "erupt"
-version = "0.16.0+162"
+version = "0.22.0+204"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "9f6a633c93fffa47617fcb289cc0b1d0de212b08939c5beb0a56ce03fae19b34"
+checksum = "20754c39f076e1b2d732d8f50031dcea43cebf5c3790f45d7b692ed9669660d1"
 dependencies = [
  "bitflags",
  "libloading",
+ "smallvec",
 ]
 
 [[package]]
 name = "gpu-alloc"
-version = "0.3.2"
+version = "0.5.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "739e1e53f1e4b5093342e753bcb868e53d28e0c69da9c9ce9632455bfa37ba30"
+checksum = "7fc59e5f710e310e76e6707f86c561dd646f69a8876da9131703b2f717de818d"
 dependencies = [
  "bitflags",
  "gpu-alloc-types",
@@ -57,9 +58,9 @@ dependencies = [
 
 [[package]]
 name = "gpu-alloc-erupt"
-version = "0.2.0"
+version = "0.7.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "613c4cdb60fa9eb4126c6c0511ed00db6126bea00bbbe13524c152aaa1b2b121"
+checksum = "9defeefd9eb18e87303e6fea93ca73b0db8030b8feeddec987ed38ed2ef7717a"
 dependencies = [
  "erupt",
  "gpu-alloc-types",
@@ -94,9 +95,9 @@ checksum = "349d5a591cd28b49e1d1037471617a32ddcda5731b99419008085f72d5a53836"
 
 [[package]]
 name = "libloading"
-version = "0.6.7"
+version = "0.7.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "351a32417a12d5f7e82c368a66781e307834dae04c6ce0cd4456d52989229883"
+checksum = "efbc0f03f9a775e9f6aed295c6a1ba2253c5757a9e03d55c6caa46a681abcddd"
 dependencies = [
  "cfg-if",
  "winapi",
@@ -150,6 +151,12 @@ dependencies = [
  "cmake",
  "libc",
 ]
+
+[[package]]
+name = "smallvec"
+version = "1.9.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "2fd0db749597d91ff862fd1d55ea87f7855a744a8425a64695b6fca237d1dad1"
 
 [[package]]
 name = "syn"

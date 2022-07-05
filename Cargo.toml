@@ -6,9 +6,9 @@ edition = "2021"
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
-gpu-alloc = { version = "0.3", default-features = false}
-gpu-alloc-erupt = { version = "0.2.0", default-features = false}
-erupt = { version = "0.16", default-features = false, features = ["loading"] }
+gpu-alloc = { version = "0.5", default-features = false}
+gpu-alloc-erupt = { version = "0.7", default-features = false}
+erupt = { version = "0.22", default-features = false, features = ["loading"] }
 inline-spirv = { version = "0.1", default-features = false, features = ["glsl", "build-from-source"] }
 bytemuck = "1.4"
 
