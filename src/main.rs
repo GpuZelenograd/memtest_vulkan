@@ -61,7 +61,7 @@ unsafe extern "system" fn debug_callback(
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let entry = EntryLoader::new()?;
     println!(
-        "compute example - Vulkan Instance {}.{}.{}",
+        "Running https://github.com/galkinvv/memtest-vulkan on Vulkan Instance {}.{}.{}",
         vk::api_version_major(entry.instance_version()),
         vk::api_version_minor(entry.instance_version()),
         vk::api_version_patch(entry.instance_version())

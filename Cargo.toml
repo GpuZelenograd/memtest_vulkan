@@ -1,9 +1,8 @@
 [package]
 name = "memtest-vulkan"
-version = "0.1.0"
+version = "0.0.1"
 edition = "2021"
 
-# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
 gpu-alloc = { version = "0.5", default-features = false}
@@ -13,6 +12,7 @@ inline-spirv = { version = "0.1", default-features = false, features = ["glsl", 
 bytemuck = "1.4"
 
 [profile.release]
-strip = true  # Automatically strip symbols from the binary.
+# produce small file size release builds
+strip = true
 lto = true
 codegen-units = 1
