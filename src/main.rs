@@ -13,9 +13,8 @@ use std::{
 };
 
 const LAYER_KHRONOS_VALIDATION: *const c_char = cstr!("VK_LAYER_KHRONOS_validation");
-const SHADER: &[u32] = inline_spirv::inline_spirv!(r#"
+const SHADER: &[u32] = memtest_vulkan_build::compiled_vk_compute_spirv!(r#"
 #version 460
-#extension GL_ARB_separate_shader_objects : enable
 
 #define SIZE 32
 
@@ -28,7 +27,7 @@ layout(set = 0, binding = 0) restrict buffer Buffer {
 void main() {
     buf_data[gl_LocalInvocationIndex] = sqrt(buf_data[gl_LocalInvocationIndex]);
 }
-"#, glsl, comp);
+"#);
 
 
 #[derive(Copy, Clone, Debug)]
@@ -55,7 +54,7 @@ unsafe extern "system" fn debug_callback(
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let entry = EntryLoader::new()?;
     println!(
-        "Running https://github.com/galkinvv/memtest-vulkan on Vulkan Instance {}.{}.{}",
+        "Running https://github.com/galkinvv/memtest_vulkan on Vulkan Instance {}.{}.{}",
         vk::api_version_major(entry.instance_version()),
         vk::api_version_minor(entry.instance_version()),
         vk::api_version_patch(entry.instance_version())

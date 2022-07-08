@@ -1,13 +1,17 @@
 #!/usr/bin/env -Scargo run --release --manifest-path
 [package]
-name = "memtest-vulkan"
+name = "memtest_vulkan"
 version = "0.0.1"
 edition = "2021"
 
-
 [dependencies]
 erupt = { version = "0.22", default-features = false, features = ["loading"] }
-inline-spirv = { version = "0.1", default-features = false, features = ["glsl", "build-from-source"] }
+memtest_vulkan_build = { path = "./memtest_vulkan_build"}
+
+[workspace]
+members = [
+    "memtest_vulkan_build",
+]
 
 [profile.release]
 # produce small file size release builds
