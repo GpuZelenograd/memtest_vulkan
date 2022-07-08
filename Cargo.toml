@@ -1,3 +1,4 @@
+#!/usr/bin/env -Scargo run --release --manifest-path
 [package]
 name = "memtest-vulkan"
 version = "0.0.1"
@@ -5,11 +6,8 @@ edition = "2021"
 
 
 [dependencies]
-gpu-alloc = { version = "0.5", default-features = false}
-gpu-alloc-erupt = { version = "0.7", default-features = false}
 erupt = { version = "0.22", default-features = false, features = ["loading"] }
 inline-spirv = { version = "0.1", default-features = false, features = ["glsl", "build-from-source"] }
-bytemuck = "1.4"
 
 [profile.release]
 # produce small file size release builds

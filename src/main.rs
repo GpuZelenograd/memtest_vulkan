@@ -6,10 +6,7 @@ use erupt::{
     extensions::ext_debug_utils,
     cstr,
 };
-use gpu_alloc::{Config, GpuAllocator, Request, UsageFlags};
-use gpu_alloc_erupt::{device_properties, EruptMemoryDevice};
 use std::{
-    convert::TryInto,
     ffi::{c_void, CStr, CString},
     os::raw::c_char,
     mem, 
@@ -37,11 +34,8 @@ void main() {
 #[derive(Copy, Clone, Debug)]
 #[repr(C)]
 struct Buffer {
-    data: [f32; 21],
+    buf_data: [f32; 32],
 }
-
-unsafe impl bytemuck::Zeroable for Buffer {}
-unsafe impl bytemuck::Pod for Buffer {}
 
 unsafe extern "system" fn debug_callback(
     _message_severity: vk::DebugUtilsMessageSeverityFlagBitsEXT,
@@ -129,6 +123,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         CStr::from_ptr(properties.device_name.as_ptr())
     });
 
+    let memory_props = unsafe { instance.get_physical_device_memory_properties(physical_device) };
+
     let queue_create_info = vec![vk::DeviceQueueCreateInfoBuilder::new()
         .queue_family_index(queue_family)
         .queue_priorities(&[1.0])];
@@ -139,22 +135,34 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         .enabled_features(&features)
         .enabled_layer_names(&device_layers);
 
-    let device = unsafe{ DeviceLoader::new(&instance, physical_device, &device_create_info)}?;
+    let device = unsafe { DeviceLoader::new(&instance, physical_device, &device_create_info)}?;
     let queue = unsafe { device.get_device_queue(queue_family, 0) };
 
-    let data = Buffer {
-        data: (0..21)
-            .map(|i| i as f32)
-            .collect::<Vec<_>>()
-            .as_slice()
-            .try_into()?,
-    };
-    let data_size = mem::size_of_val(&data) as vk::DeviceSize;
+    let data_size = mem::size_of::<Buffer>() as vk::DeviceSize;
 
-    let buffer_create_info = vk::BufferCreateInfoBuilder::new()
+    let io_buffer_create_info = vk::BufferCreateInfoBuilder::new()
         .sharing_mode(vk::SharingMode::EXCLUSIVE)
         .usage(vk::BufferUsageFlags::STORAGE_BUFFER)
         .size(data_size);
+    let io_buffer = unsafe {device.create_buffer(&io_buffer_create_info, None)}.unwrap();
+    let io_mem_reqs = unsafe {device.get_buffer_memory_requirements(io_buffer)};
+    let io_mem_index = (0..memory_props.memory_type_count)
+        .find(|i| {
+            //test buffer comptibility flags expressed as bitmask
+            let suitable = (io_mem_reqs.memory_type_bits & (1 << i)) != 0;
+            let memory_type = memory_props.memory_types[*i as usize];
+            suitable && memory_type.property_flags.contains(
+                vk::MemoryPropertyFlags::DEVICE_LOCAL | vk::MemoryPropertyFlags::HOST_VISIBLE | vk::MemoryPropertyFlags::HOST_COHERENT)
+        }).ok_or("DEVICE_LOCAL | HOST_COHERENT memory type not available")?;
+    println!("IO memory type: index {}: {:?}", io_mem_index, memory_props.memory_types[io_mem_index as usize]);
+    
+    let io_memory_allocate_info = vk::MemoryAllocateInfoBuilder::new()
+        .allocation_size(io_mem_reqs.size)
+        .memory_type_index(io_mem_index);
+    let io_memory = unsafe{device.allocate_memory(&io_memory_allocate_info, None)}.unwrap();
+    let mapped: *mut Buffer = unsafe{mem::transmute(device.map_memory(io_memory, 0, vk::WHOLE_SIZE, vk::MemoryMapFlags::default()).unwrap())};
+    unsafe{device.bind_buffer_memory(io_buffer, io_memory, 0)}.unwrap();
+
 
     /*
     let mut allocator =
@@ -196,7 +204,6 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         .set_layouts(desc_layouts);
     let desc_set = unsafe { device.allocate_descriptor_sets(&desc_info) }.unwrap()[0];
 
-    /*
     unsafe {
         device.update_descriptor_sets(
             &[vk::WriteDescriptorSetBuilder::new()
@@ -204,13 +211,12 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 .dst_binding(0)
                 .descriptor_type(vk::DescriptorType::STORAGE_BUFFER)
                 .buffer_info(&[vk::DescriptorBufferInfoBuilder::new()
-                    .buffer(*buffer.object())
-                    .offset(buffer.region().start)
-                    .range(data_size)])],
+                    .buffer(io_buffer)
+                    .offset(0)
+                    .range(vk::WHOLE_SIZE)])],
             &[],
         )
     };
-    */
 
     let pipeline_layout_desc_layouts = &[desc_layout];
     let pipeline_layout_info =
@@ -245,6 +251,14 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let begin_info = vk::CommandBufferBeginInfoBuilder::new()
         .flags(vk::CommandBufferUsageFlags::ONE_TIME_SUBMIT);
+    unsafe {
+        let buffer_in: &mut Buffer = &mut *mapped;
+        for i in 0..32
+        {
+            buffer_in.buf_data[i] = i as f32;
+        }
+        println!("input: {:?}", buffer_in);
+    }
 
     unsafe {
         device.begin_command_buffer(cmd_buf, &begin_info).unwrap();
@@ -272,17 +286,19 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             .unwrap();
         device.wait_for_fences(&[fence], true, u64::MAX).unwrap();
     }
-    /*
-    let map = buffer.map(&device, ..data_size).unwrap();
-    println!("input: {:?}", data);
-    println!("output: {:?}", bytemuck::from_bytes::<Buffer>(map.read()));
-    map.unmap(&device).unwrap();
-    */
-    // Destruction
+    
+    unsafe {
+        let buffer_out: &Buffer = &*mapped;
+        println!("output: {:?}", buffer_out);
+    }
+    
+    // Cleanup & Destruction
     unsafe {
         device.device_wait_idle().unwrap();
 
-        //allocator.free(&device, buffer);
+        device.destroy_buffer(io_buffer, None);
+        device.unmap_memory(io_memory);
+        device.free_memory(io_memory, None);
         device.destroy_pipeline(pipeline, None);
         device.destroy_pipeline_layout(pipeline_layout, None);
         device.destroy_command_pool(cmd_pool, None);
