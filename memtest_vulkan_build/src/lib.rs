@@ -9,12 +9,11 @@ fn naga_compile(
 ) -> Result<Vec<u32>, String> {
     use naga::{
         valid::{ValidationFlags, Validator, Capabilities},
-        ShaderStage,
-        front::glsl::{Parser, Options}
+        front::wgsl::Parser
     };
 
-    let module = Parser::default().parse(&Options::from(ShaderStage::Compute), src);
-    let module = module.map_err(|errs| format!("{:?}", errs))?;
+    let module = Parser::new().parse(src);
+    let module = module.map_err(|e| e.emit_to_string(src))?;
     let mut opts = naga::back::spv::Options::default();
     opts.lang_version = (1, 0);
     opts.flags = naga::back::spv::WriterFlags::DEBUG;
