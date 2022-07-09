@@ -17,19 +17,30 @@ struct IOBuffer
     max: u32,
     min: u32,
     sum: u32,
+    write_count: u32,
+    read_count: u32,
 }
 
 @group(0) @binding(0) var<storage, read_write> buf: IOBuffer;
-@group(0) @binding(1) var<storage, read_write> prepared_data: array<u32, 32>;
+@group(0) @binding(1) var<storage, read_write> prepared_data: array<u32>;
 
 @compute @workgroup_size(32, 1, 1)
-fn main(@builtin(local_invocation_index) local_invocation_index: u32) {
-    prepared_data[local_invocation_index] = local_invocation_index;
-    atomicMax(&buf.max, prepared_data[local_invocation_index]);
-    atomicMin(&buf.min, prepared_data[local_invocation_index]);
-    atomicAdd(&buf.sum, 1u);
+fn main(@builtin(global_invocation_id) global_invocation_id: vec3<u32>) {
+    if (buf.write_count > 0)
+    {
+        prepared_data[global_invocation_id[0]] = global_invocation_id[0];
+    }
+    if (buf.read_count > 0)
+    {
+        atomicMax(&buf.max, prepared_data[global_invocation_id[0]]);
+        atomicMin(&buf.min, prepared_data[global_invocation_id[0]]);
+        atomicAdd(&buf.sum, arrayLength(&prepared_data)/32u);
+    }
 }
 "#);
+
+const WG_SIZE: u64 = 32;
+const ELEMENT_SIZE: u64 = std::mem::size_of::<u32>() as u64;
 
 #[derive(Debug)]
 #[repr(C)]
@@ -38,12 +49,14 @@ struct IOBuffer
     max: u32,
     min: u32,
     sum: u32,
+    write_count: u32,
+    read_count: u32,
 }
 
 impl Default for IOBuffer
 {
     fn default() -> Self { 
-        IOBuffer { max : u32::MIN, min : u32::MAX, sum : 0 }
+        IOBuffer { max : u32::MIN, min : u32::MAX, sum : 0, write_count : 0, read_count: 0}
     }
 }
 
@@ -176,7 +189,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let mapped: *mut IOBuffer = unsafe{mem::transmute(device.map_memory(io_memory, 0, vk::WHOLE_SIZE, vk::MemoryMapFlags::default()).unwrap())};
     unsafe{device.bind_buffer_memory(io_buffer, io_memory, 0)}.unwrap();
 
-    let test_data_size = 1024*1024*1024;
+    let test_data_size = 2*1024*1024*1024 - WG_SIZE * ELEMENT_SIZE;
 
     let test_buffer_create_info = vk::BufferCreateInfoBuilder::new()
         .sharing_mode(vk::SharingMode::EXCLUSIVE)
@@ -287,16 +300,15 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         .level(vk::CommandBufferLevel::PRIMARY);
     let cmd_buf = unsafe { device.allocate_command_buffers(&cmd_buf_info) }.unwrap()[0];
 
-    let begin_info = vk::CommandBufferBeginInfoBuilder::new()
-        .flags(vk::CommandBufferUsageFlags::ONE_TIME_SUBMIT);
     unsafe {
-        let buffer_in: &mut IOBuffer = &mut *mapped;
+        let buffer_in = &mut *mapped;
         *buffer_in = IOBuffer::default();
         println!("input: {:?}", buffer_in);
+        buffer_in.write_count = 1;
     }
 
     unsafe {
-        device.begin_command_buffer(cmd_buf, &begin_info).unwrap();
+        device.begin_command_buffer(cmd_buf, &vk::CommandBufferBeginInfo::default()).unwrap();
         device.cmd_bind_pipeline(cmd_buf, vk::PipelineBindPoint::COMPUTE, pipeline);
         device.cmd_bind_descriptor_sets(
             cmd_buf,
@@ -306,7 +318,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             &[desc_set],
             &[],
         );
-        device.cmd_dispatch(cmd_buf, 1, 1, 1);
+        device.cmd_dispatch(cmd_buf, (test_data_size/WG_SIZE/ELEMENT_SIZE) as u32, 1, 1);
         device.end_command_buffer(cmd_buf).unwrap();
     }
 
@@ -320,6 +332,20 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             .queue_submit(queue, submit_info, fence)
             .unwrap();
         device.wait_for_fences(&[fence], true, u64::MAX).unwrap();
+        device.reset_fences(&[fence]).unwrap();
+    }
+    unsafe {
+        let buffer_in_out = &mut *mapped;
+        buffer_in_out.write_count = 0;
+        buffer_in_out.read_count = 1;
+        println!("medium: {:?}", buffer_in_out);
+    }
+    unsafe {
+        device
+            .queue_submit(queue, submit_info, fence)
+            .unwrap();
+        device.wait_for_fences(&[fence], true, u64::MAX).unwrap();
+        device.reset_fences(&[fence]).unwrap();
     }
     
     unsafe {
