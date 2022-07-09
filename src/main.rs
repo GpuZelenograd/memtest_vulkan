@@ -6,6 +6,7 @@ use erupt::{
 use std::{
     ffi::{c_void, CStr, CString},
     os::raw::c_char,
+    fmt,
     mem, 
 };
 
@@ -14,49 +15,167 @@ const READ_SHADER: &[u32] = memtest_vulkan_build::compiled_vk_compute_spirv!(r#"
 
 struct IOBuffer
 {
-    max: u32,
-    min: u32,
-    sum: u32,
-    write_count: u32,
-    read_count: u32,
+    single_bit_err_idx: array<u32, 32>,
+    err_bits_count: array<u32, 32>,
+    max_bad_idx: u32,
+    min_bad_idx: u32,
+    write_do: u32,
+    read_do: u32,
+    iteration: u32,
+    done_iter_or_status: u32,
+    value_calc_param: u32,
 }
 
-@group(0) @binding(0) var<storage, read_write> buf: IOBuffer;
-@group(0) @binding(1) var<storage, read_write> prepared_data: array<u32>;
+@group(0) @binding(0) var<storage, read_write> io: IOBuffer;
+@group(0) @binding(1) var<storage, read_write> test: array<u32>;
 
-@compute @workgroup_size(32, 1, 1)
-fn main(@builtin(global_invocation_id) global_invocation_id: vec3<u32>) {
-    if (buf.write_count > 0)
+fn test_value_by_index(i:u32)->u32
+{
+    let result = i + io.value_calc_param;
+    if io.read_do != 0 && i == 0xADBAD/4
     {
-        prepared_data[global_invocation_id[0]] = global_invocation_id[0];
+        return result ^ 4;//error simulation for test
     }
-    if (buf.read_count > 0)
-    {
-        atomicMax(&buf.max, prepared_data[global_invocation_id[0]]);
-        atomicMin(&buf.min, prepared_data[global_invocation_id[0]]);
-        atomicAdd(&buf.sum, arrayLength(&prepared_data)/32u);
+    return result;
+}
+
+@compute @workgroup_size(128, 1, 1)
+fn main(@builtin(global_invocation_id) global_invocation_id: vec3<u32>) {
+    let ITER_CONFIRMATION_VALUE : u32 = 0xFFFFFFu;
+    let ERROR_STATUS : u32 = 0xFFFFFFFFu;
+
+    let test_idx = global_invocation_id[0];
+    if io.read_do != 0 {
+        let expected_value = test_value_by_index(test_idx);
+        let actual_value = test[global_invocation_id[0]];
+        if actual_value != expected_value {
+            //slow path, executed only on errors found
+            let error_mask = actual_value ^ expected_value;
+            let one_bits = countOneBits(error_mask);
+            if one_bits == 1
+            {
+                let bit_idx = firstLeadingBit(error_mask);
+                atomicAdd(&io.single_bit_err_idx[bit_idx], 1u);
+            }
+            atomicAdd(&io.err_bits_count[one_bits % 32u], 1u);
+            atomicMax(&io.max_bad_idx, test_idx);
+            atomicMin(&io.min_bad_idx, test_idx);
+            atomicMax(&io.done_iter_or_status, ERROR_STATUS);
+        }
+        //assign done_iter_or_status only on specific index (performance reasons)
+        if expected_value == ITER_CONFIRMATION_VALUE {
+            atomicMax(&io.done_iter_or_status, io.iteration);
+        }
+    } else if io.write_do != 0 {
+        test[global_invocation_id[0]] = test_value_by_index(global_invocation_id[0]);
     }
 }
 "#);
 
-const WG_SIZE: u64 = 32;
+const WG_SIZE:u64 = 128;
 const ELEMENT_SIZE: u64 = std::mem::size_of::<u32>() as u64;
+const ELEMENT_BIT_SIZE: usize = (ELEMENT_SIZE * 8) as usize;
+const TEST_WINDOW_SIZE_GRANULARITY: u64 = WG_SIZE * ELEMENT_SIZE;
+const TEST_WINDOW_MAX_SIZE: u64= 2*1024*1024*1024 - WG_SIZE * ELEMENT_SIZE;
 
-#[derive(Debug)]
+
+#[derive(Default)]
+struct U64HexDebug(u64);
+
+impl fmt::Debug for U64HexDebug {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "0x{:X}", self.0)
+    }
+}
+
+#[derive(Default)]
+struct MostlyZeroArr([u32; ELEMENT_BIT_SIZE]);
+
+impl fmt::Debug for MostlyZeroArr {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "[")?;
+        let mut zero_count = 0;
+        for i in 0..ELEMENT_BIT_SIZE
+        {
+            let vali = self.0[i];
+            if vali != 0
+            {
+                write!(f, "[{}]={}, ", i, vali)?;
+            }
+            else
+            {
+                zero_count += 1;
+            }
+        }
+        write!(f, "{} zeroes]", zero_count)
+    }
+}
+
+
+#[derive(Debug, Default)]
 #[repr(C)]
 struct IOBuffer
 {
-    max: u32,
-    min: u32,
-    sum: u32,
-    write_count: u32,
-    read_count: u32,
+    single_bit_err_idx: MostlyZeroArr,
+    err_bits_count: MostlyZeroArr,
+    max_bad_idx: u32,
+    min_bad_idx: u32,
+    write_do: u32,
+    read_do: u32,
+    iteration: u32,
+    done_iter_or_status: u32,
+    value_calc_param: u32
 }
 
-impl Default for IOBuffer
+impl IOBuffer
 {
-    fn default() -> Self { 
-        IOBuffer { max : u32::MIN, min : u32::MAX, sum : 0, write_count : 0, read_count: 0}
+    fn prepare_next_iter_write(&mut self)
+    {
+        *self = IOBuffer { 
+            max_bad_idx : u32::MIN,
+            min_bad_idx : u32::MAX,
+            iteration: self.iteration + 1,
+            write_do : 1,
+            value_calc_param: (self.iteration + 1).wrapping_mul(0x1000100),
+            ..Self::default()
+        };
+        self.set_calc_param_for_starting_window();
+    }
+    fn continue_iter_read(&mut self, read_do:u32)
+    {
+        self.write_do = 0;
+        self.read_do = read_do;
+        self.set_calc_param_for_starting_window();
+    }
+    fn set_calc_param_for_starting_window(&mut self)
+    {
+        self.value_calc_param = self.iteration.wrapping_mul(0x1000100);
+    }
+    fn reset_errors(&mut self)
+    {
+        *self = IOBuffer { 
+            iteration: self.iteration,
+            write_do : self.write_do,
+            read_do : self.read_do,
+            value_calc_param: self.value_calc_param,
+            max_bad_idx : u32::MIN,
+            min_bad_idx : u32::MAX,
+            ..Self::default()
+        };
+    }
+    fn get_error_addresses(&self, buf_offset:u64) ->  Option<std::ops::RangeInclusive<U64HexDebug>>
+    {
+        if self.done_iter_or_status == self.iteration
+        {
+            None
+        }
+        else
+        {
+            Some(std::ops::RangeInclusive::<U64HexDebug>::new(
+                U64HexDebug(buf_offset + self.min_bad_idx as u64 * ELEMENT_SIZE),
+                U64HexDebug(buf_offset + self.max_bad_idx as u64 * ELEMENT_SIZE + ELEMENT_SIZE - 1)
+            ))
+        }
     }
 }
 
@@ -189,7 +308,11 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let mapped: *mut IOBuffer = unsafe{mem::transmute(device.map_memory(io_memory, 0, vk::WHOLE_SIZE, vk::MemoryMapFlags::default()).unwrap())};
     unsafe{device.bind_buffer_memory(io_buffer, io_memory, 0)}.unwrap();
 
-    let test_data_size = 2*1024*1024*1024 - WG_SIZE * ELEMENT_SIZE;
+    let test_data_size = 5u64*1024*1024*1024;
+    let test_window_count = test_data_size / TEST_WINDOW_MAX_SIZE + u64::from(test_data_size % TEST_WINDOW_MAX_SIZE != 0);
+    let test_window_size = test_data_size / test_window_count;
+    let test_window_size = test_window_size - test_window_size % TEST_WINDOW_SIZE_GRANULARITY;
+    let test_data_size = test_window_size * test_window_count;
 
     let test_buffer_create_info = vk::BufferCreateInfoBuilder::new()
         .sharing_mode(vk::SharingMode::EXCLUSIVE)
@@ -256,18 +379,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                     .buffer(io_buffer)
                     .offset(0)
                     .range(vk::WHOLE_SIZE)]),
-            vk::WriteDescriptorSetBuilder::new()
-                .dst_set(desc_set)
-                .dst_binding(1)
-                .descriptor_type(vk::DescriptorType::STORAGE_BUFFER)
-                .buffer_info(&[vk::DescriptorBufferInfoBuilder::new()
-                    .buffer(test_buffer)
-                    .offset(0)
-                    .range(vk::WHOLE_SIZE)]),
             ],
             &[],
-        )
-    };
+        );
+    }
 
     let pipeline_layout_desc_layouts = &[desc_layout];
     let pipeline_layout_info =
@@ -291,7 +406,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let pipeline =
         unsafe { device.create_compute_pipelines(Default::default(), pipeline_info, None) }.unwrap()[0];
 
-    let cmd_pool_info = vk::CommandPoolCreateInfoBuilder::new().queue_family_index(queue_family);
+    let cmd_pool_info = vk::CommandPoolCreateInfoBuilder::new()
+        .queue_family_index(queue_family)
+        .flags(vk::CommandPoolCreateFlags::RESET_COMMAND_BUFFER);
     let cmd_pool = unsafe { device.create_command_pool(&cmd_pool_info, None) }.unwrap();
 
     let cmd_buf_info = vk::CommandBufferAllocateInfoBuilder::new()
@@ -300,14 +417,28 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         .level(vk::CommandBufferLevel::PRIMARY);
     let cmd_buf = unsafe { device.allocate_command_buffers(&cmd_buf_info) }.unwrap()[0];
 
-    unsafe {
-        let buffer_in = &mut *mapped;
-        *buffer_in = IOBuffer::default();
-        println!("input: {:?}", buffer_in);
-        buffer_in.write_count = 1;
-    }
+    let test_element_count = (test_window_size/ELEMENT_SIZE) as u32;
 
-    unsafe {
+    let fence_info = vk::FenceCreateInfoBuilder::new();
+    let fence = unsafe { device.create_fence(&fence_info, None) }.unwrap();
+
+    let cmd_bufs = &[cmd_buf];
+    let submit_info = &[vk::SubmitInfoBuilder::new().command_buffers(cmd_bufs)];
+    let execute_wait_queue = |buf_offset: u64| unsafe {
+        let now = std::time::Instant::now();
+        device.update_descriptor_sets(
+            &[
+            vk::WriteDescriptorSetBuilder::new()
+                .dst_set(desc_set)
+                .dst_binding(1)
+                .descriptor_type(vk::DescriptorType::STORAGE_BUFFER)
+                .buffer_info(&[vk::DescriptorBufferInfoBuilder::new()
+                    .buffer(test_buffer)
+                    .offset(buf_offset)
+                    .range(test_window_size)]),
+            ],
+            &[],
+        );
         device.begin_command_buffer(cmd_buf, &vk::CommandBufferBeginInfo::default()).unwrap();
         device.cmd_bind_pipeline(cmd_buf, vk::PipelineBindPoint::COMPUTE, pipeline);
         device.cmd_bind_descriptor_sets(
@@ -318,41 +449,62 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             &[desc_set],
             &[],
         );
-        device.cmd_dispatch(cmd_buf, (test_data_size/WG_SIZE/ELEMENT_SIZE) as u32, 1, 1);
+        device.cmd_dispatch(cmd_buf, test_element_count/WG_SIZE as u32, 1, 1);
         device.end_command_buffer(cmd_buf).unwrap();
-    }
-
-    let fence_info = vk::FenceCreateInfoBuilder::new();
-    let fence = unsafe { device.create_fence(&fence_info, None) }.unwrap();
-
-    let cmd_bufs = &[cmd_buf];
-    let submit_info = &[vk::SubmitInfoBuilder::new().command_buffers(cmd_bufs)];
-    unsafe {
-        device
-            .queue_submit(queue, submit_info, fence)
-            .unwrap();
+        device.queue_submit(queue, submit_info, fence).unwrap();
         device.wait_for_fences(&[fence], true, u64::MAX).unwrap();
         device.reset_fences(&[fence]).unwrap();
+        now.elapsed()
+    };
+    {
+        let mut buffer_in = IOBuffer::default();
+        buffer_in.prepare_next_iter_write();
+        println!("input: {:?}", buffer_in);
+        unsafe {
+            std::ptr::write(mapped, buffer_in)
+        }
+    }
+    for window_idx in 0..test_window_count
+    {
+        let test_offset = test_window_size * window_idx;
+
+        unsafe {
+            (*mapped).value_calc_param += window_idx as u32 * 0x81;
+        }
+        let write_exec_duration = execute_wait_queue(test_offset);
+        unsafe {
+            let buffer_status = std::ptr::read(mapped);
+            println!("medium: {:?} {:?}", buffer_status, write_exec_duration);
+        }
     }
     unsafe {
-        let buffer_in_out = &mut *mapped;
-        buffer_in_out.write_count = 0;
-        buffer_in_out.read_count = 1;
-        println!("medium: {:?}", buffer_in_out);
+        let mut buffer_in_out = std::ptr::read(mapped);
+        buffer_in_out.continue_iter_read(1);
+        std::ptr::write(mapped, buffer_in_out);
     }
-    unsafe {
-        device
-            .queue_submit(queue, submit_info, fence)
-            .unwrap();
-        device.wait_for_fences(&[fence], true, u64::MAX).unwrap();
-        device.reset_fences(&[fence]).unwrap();
+    for window_idx in 0..test_window_count
+    {
+        unsafe {
+            let mut buffer_in_out = std::ptr::read(mapped);
+            buffer_in_out.reset_errors();
+            buffer_in_out.value_calc_param += window_idx as u32 * 0x81;
+            std::ptr::write(mapped, buffer_in_out);
+        }
+        let test_offset = test_window_size * window_idx;
+        let read_exec_duration = execute_wait_queue(test_offset);
+        {
+            let buffer_out : IOBuffer;
+            unsafe {
+                buffer_out = std::ptr::read(mapped);
+            }
+            println!("output: {:?} {:?}", buffer_out, read_exec_duration);
+            if let Some(error) = buffer_out.get_error_addresses(test_offset)
+            {
+                println!("error addresses: {:?}", error);
+                
+            }
+        }
     }
-    
-    unsafe {
-        let buffer_out = &*mapped;
-        println!("output: {:?}", buffer_out);
-    }
-    
     // Cleanup & Destruction
     unsafe {
         device.device_wait_idle().unwrap();
