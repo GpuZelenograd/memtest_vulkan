@@ -1,20 +1,20 @@
 use erupt::{
     vk, DeviceLoader, EntryLoader, InstanceLoader,
     extensions::{ext_debug_utils, ext_memory_budget},
-    cstr,
 };
+use byte_strings::c_str;
 use std::{
-    ffi::{c_void, CStr, CString},
-    os::raw::c_char,
+    ffi::{c_void, CStr},
     fmt,
     mem,
     time,
     sync::{Arc, atomic::{AtomicBool, Ordering::SeqCst}}
 };
+use core::cmp::{min, max};
 
-const LAYER_KHRONOS_VALIDATION: *const c_char = cstr!("VK_LAYER_KHRONOS_validation");
+const LAYER_KHRONOS_VALIDATION: &CStr = c_str!("VK_LAYER_KHRONOS_validation");
+const GB:f32 = (1024 * 1024 * 1024) as f32;
 const READ_SHADER: &[u32] = memtest_vulkan_build::compiled_vk_compute_spirv!(r#"
-
 struct IOBuf
 {
     err_bit1_idx: array<u32, 32>,
@@ -26,80 +26,88 @@ struct IOBuf
     idx_max: u32,
     idx_min: u32,
     done_iter_or_err: u32,
-    read_do: u32,
     iter: u32,
     calc_param: u32,
 }
 
 @group(0) @binding(0) var<storage, read_write> io: IOBuf;
-@group(0) @binding(1) var<storage, read_write> test: array<u32>;
+@group(0) @binding(1) var<storage, read_write> test: array<vec4<u32>>;
 
-fn test_value_by_index(i:u32)->u32
+fn test_value_by_index(i:u32)->vec4<u32>
 {
-    /*
-    if io.read_do != 0 && i == 0xADBAD/4
-    {
-        return (i + io.calc_param) ^ 4;//error simulation for test
-    }
-    */
-    return i + io.calc_param;
+    let effective_index_of_u32 = (i + io.calc_param) * 4u;
+    return vec4<u32>(effective_index_of_u32, effective_index_of_u32 + 1u, effective_index_of_u32 + 2u, effective_index_of_u32 + 3u);
 }
 
-let ITER_CONFIRMATION_VALUE : u32 = 0x1FFFFFFu;
+let ITER_CONFIRMATION_VALUE : u32 = 0x13FFFFCu;
 let ERROR_STATUS : u32 = 0xFFFFFFFFu;
 
-@compute @workgroup_size(128, 1, 1)
+@compute @workgroup_size(64, 1, 1)
 fn read(@builtin(global_invocation_id) global_invocation_id: vec3<u32>) {
 
-    let actual_value = test[global_invocation_id[0]];
-    if actual_value != test_value_by_index(global_invocation_id[0]) {
+    let actual_value : vec4<u32> = test[global_invocation_id[0]];
+    let expected_value : vec4<u32> = test_value_by_index(global_invocation_id[0]);
+    if any(actual_value != expected_value) {
         //slow path, executed only on errors found
-        let error_mask = actual_value ^ test_value_by_index(global_invocation_id[0]);
-        let one_bits = countOneBits(error_mask);
-        if one_bits == 1
-        {
-            let bit_idx = firstLeadingBit(error_mask);
-            atomicAdd(&io.err_bit1_idx[bit_idx], 1u);
-        }
-        atomicAdd(&io.err_bitcount[one_bits % 32u], 1u);
-        atomicMax(&io.idx_max, global_invocation_id[0]);
-        atomicMin(&io.idx_min, global_invocation_id[0]);
-        atomicMax(&io.done_iter_or_err, ERROR_STATUS);
-        let actual_bits = countOneBits(actual_value);
-        if actual_bits == 32
-        {
-            atomicAdd(&io.actual_ff, 1u);
-        }
-        else
-        {
-            atomicAdd(&io.actual_bitcount[actual_bits], 1u);
-            atomicMax(&io.actual_max, actual_value);
-            atomicMin(&io.actual_min, actual_value);
+        for(var i: i32 = 0; i < 4; i++) {
+            let actual_u32 = actual_value[i];
+            let error_mask = actual_u32 ^ expected_value[i];
+            if error_mask == 0 {
+                continue;
+            }
+            let one_bits = countOneBits(error_mask);
+            if one_bits == 1
+            {
+                let bit_idx = firstLeadingBit(error_mask);
+                atomicAdd(&io.err_bit1_idx[bit_idx], 1u);
+            }
+            atomicAdd(&io.err_bitcount[one_bits % 32u], 1u);
+            atomicMax(&io.idx_max, global_invocation_id[0] * 4u + i);
+            atomicMin(&io.idx_min, global_invocation_id[0] * 4u + i);
+            atomicMax(&io.done_iter_or_err, ERROR_STATUS);
+            let actual_bits = countOneBits(actual_u32);
+            if actual_bits == 32
+            {
+                atomicAdd(&io.actual_ff, 1u);
+            }
+            else
+            {
+                atomicAdd(&io.actual_bitcount[actual_bits], 1u);
+                atomicMax(&io.actual_max, actual_u32);
+                atomicMin(&io.actual_min, actual_u32);
+            }
         }
     }
     //assign done_iter_or_err only on specific index (performance reasons)
-    if actual_value == ITER_CONFIRMATION_VALUE {
+    if actual_value[0] == ITER_CONFIRMATION_VALUE {
         atomicMax(&io.done_iter_or_err, io.iter);
     }
 }
 
-@compute @workgroup_size(128, 1, 1)
+@compute @workgroup_size(64, 1, 1)
 fn write(@builtin(global_invocation_id) global_invocation_id: vec3<u32>) {
     test[global_invocation_id[0]] = test_value_by_index(global_invocation_id[0]);
 }
 
-
+@compute @workgroup_size(64, 1, 1)
+fn emulate_write_bugs(@builtin(global_invocation_id) global_invocation_id: vec3<u32>) {
+    test[global_invocation_id[0]] = test_value_by_index(global_invocation_id[0]);
+    if global_invocation_id[0] == 0xADBA {
+        test[global_invocation_id[0]][1] ^= 0x400000u;//error simulation for test
+    }
+}
 "#);
 
-const WG_SIZE:u64 = 128;
-const ELEMENT_SIZE: u64 = std::mem::size_of::<u32>() as u64;
+const WG_SIZE:i64 = 64;
+const VEC_SIZE: usize = 4; //vector processed by single workgroup item
+const ELEMENT_SIZE: i64 = std::mem::size_of::<u32>() as i64;
 const ELEMENT_BIT_SIZE: usize = (ELEMENT_SIZE * 8) as usize;
-const TEST_WINDOW_SIZE_GRANULARITY: u64 = WG_SIZE * ELEMENT_SIZE;
-const TEST_WINDOW_MAX_SIZE: u64= 2*1024*1024*1024 - WG_SIZE * ELEMENT_SIZE;
+const TEST_WINDOW_SIZE_GRANULARITY: i64 = WG_SIZE * ELEMENT_SIZE;
+const TEST_WINDOW_MAX_SIZE: i64= 4*1024*1024*1024 - WG_SIZE * ELEMENT_SIZE;
 
 
 #[derive(Default)]
-struct U64HexDebug(u64);
+struct U64HexDebug(i64);
 
 impl fmt::Debug for U64HexDebug {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
@@ -143,7 +151,6 @@ struct IOBuf
     idx_max: u32,
     idx_min: u32,
     done_iter_or_err: u32,
-    read_do: u32,
     iter: u32,
     calc_param: u32
 }
@@ -155,26 +162,23 @@ impl IOBuf
         self.reset_errors();
         *self = IOBuf { 
             iter: self.iter + 1,
-            read_do : 0,
-            calc_param: (self.iter + 1).wrapping_mul(0x1000100),
+            calc_param: (self.iter + 1).wrapping_mul(0x100100),
             ..*self
         };
         self.set_calc_param_for_starting_window();
     }
-    fn continue_iter_read(&mut self, read_do:u32)
+    fn continue_iter_read(&mut self)
     {
-        self.read_do = read_do;
         self.set_calc_param_for_starting_window();
     }
     fn set_calc_param_for_starting_window(&mut self)
     {
-        self.calc_param = self.iter.wrapping_mul(0x1000100);
+        self.calc_param = self.iter.wrapping_mul(0x100100);
     }
     fn reset_errors(&mut self)
     {
         *self = IOBuf { 
             iter: self.iter,
-            read_do : self.read_do,
             calc_param: self.calc_param,
             idx_max : u32::MIN,
             idx_min : u32::MAX,
@@ -183,7 +187,7 @@ impl IOBuf
             ..Self::default()
         };
     }
-    fn get_error_addresses(&self, buf_offset:u64) ->  Option<std::ops::RangeInclusive<U64HexDebug>>
+    fn get_error_addresses(&self, buf_offset:i64) ->  Option<std::ops::RangeInclusive<U64HexDebug>>
     {
         if self.done_iter_or_err == self.iter
         {
@@ -192,8 +196,8 @@ impl IOBuf
         else
         {
             Some(std::ops::RangeInclusive::<U64HexDebug>::new(
-                U64HexDebug(buf_offset + self.idx_min as u64 * ELEMENT_SIZE),
-                U64HexDebug(buf_offset + self.idx_max as u64 * ELEMENT_SIZE + ELEMENT_SIZE - 1)
+                U64HexDebug(buf_offset + self.idx_min as i64 * ELEMENT_SIZE),
+                U64HexDebug(buf_offset + (self.idx_max + 1) as i64 * ELEMENT_SIZE  - 1)
             ))
         }
     }
@@ -228,8 +232,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let mut device_layers = Vec::new();
 
     instance_extensions.push(ext_debug_utils::EXT_DEBUG_UTILS_EXTENSION_NAME);
-    instance_layers.push(LAYER_KHRONOS_VALIDATION);
-    device_layers.push(LAYER_KHRONOS_VALIDATION);
+    instance_layers.push(LAYER_KHRONOS_VALIDATION.as_ptr());
+    device_layers.push(LAYER_KHRONOS_VALIDATION.as_ptr());
 
     let app_info = vk::ApplicationInfoBuilder::new().
         api_version(vk::API_VERSION_1_1);
@@ -297,10 +301,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         CStr::from_ptr(props.device_name.as_ptr())
     });
 
-    let memory_props = unsafe { instance.get_physical_device_memory_properties(physical_device) };
-    let mut budget_request = *vk::PhysicalDeviceMemoryProperties2Builder::new();
-    budget_request.s_type = vk::StructureType::PHYSICAL_DEVICE_MEMORY_BUDGET_PROPERTIES_EXT;
-    let memory_props_budget = unsafe { instance.get_physical_device_memory_properties2(physical_device, Some(budget_request)) };
+    //budget_request.s_type = vk::StructureType::PHYSICAL_DEVICE_MEMORY_BUDGET_PROPERTIES_EXT;
+    //let memory_props_budget = unsafe { instance.get_physical_device_memory_properties2(physical_device, Some(budget_request)) };
 
     let queue_create_info = vec![vk::DeviceQueueCreateInfoBuilder::new()
         .queue_family_index(queue_family)
@@ -314,6 +316,34 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let device = unsafe { DeviceLoader::new(&instance, physical_device, &device_create_info)}?;
     let queue = unsafe { device.get_device_queue(queue_family, 0) };
+
+    let mut budget_structure : ext_memory_budget::PhysicalDeviceMemoryBudgetPropertiesEXT = Default::default();
+    let mut budget_request = *vk::PhysicalDeviceMemoryProperties2Builder::new();
+    budget_request.p_next = &mut budget_structure as *mut ext_memory_budget::PhysicalDeviceMemoryBudgetPropertiesEXT as *mut c_void;
+    let memory_props2 = unsafe { instance.get_physical_device_memory_properties2(physical_device, Some(budget_request)) };
+    let memory_props = memory_props2.memory_properties;
+
+    let mut test_data_size = 0i64;
+    const TEST_DATA_KEEP_FREE:i64 = 400*1024*1024;
+    for i in 0..memory_props.memory_heap_count as usize
+    {
+        if !memory_props.memory_heaps[i].flags.contains(vk::MemoryHeapFlags::DEVICE_LOCAL)
+        {
+            continue;
+        }
+        let mut heap_free = memory_props.memory_heaps[i].size as i64;
+        let usage = budget_structure.heap_usage[i] as i64;
+        if usage > 0 && usage < heap_free
+        {
+            heap_free -= usage;
+        }
+        let budget = budget_structure.heap_budget[i] as i64;
+        if budget > 0
+        {
+            heap_free = min(heap_free, budget);
+        }
+        test_data_size = max(test_data_size, heap_free - TEST_DATA_KEEP_FREE);
+    }
 
     let io_data_size = mem::size_of::<IOBuf>() as vk::DeviceSize;
 
@@ -331,7 +361,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             suitable && memory_type.property_flags.contains(
                 vk::MemoryPropertyFlags::DEVICE_LOCAL | vk::MemoryPropertyFlags::HOST_VISIBLE | vk::MemoryPropertyFlags::HOST_COHERENT)
         }).ok_or("DEVICE_LOCAL | HOST_COHERENT memory type not available")?;
-    println!("IO memory type: index {}: {:?} heap {:?}", io_mem_index, memory_props.memory_types[io_mem_index as usize], memory_props.memory_heaps[memory_props.memory_types[io_mem_index as usize].heap_index as usize]);
+    println!("IO memory                  type {}: {:?} heap {:?}", io_mem_index, memory_props.memory_types[io_mem_index as usize], memory_props.memory_heaps[memory_props.memory_types[io_mem_index as usize].heap_index as usize]);
 
     let io_memory_allocate_info = vk::MemoryAllocateInfoBuilder::new()
         .allocation_size(io_mem_reqs.size)
@@ -341,8 +371,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let mapped: *mut IOBuf = unsafe{mem::transmute(device.map_memory(io_memory, 0, vk::WHOLE_SIZE, vk::MemoryMapFlags::default()).unwrap())};
     unsafe{device.bind_buffer_memory(io_buffer, io_memory, 0)}.unwrap();
 
-    let test_data_size = 5u64*1024*1024*1024;
-    let test_window_count = test_data_size / TEST_WINDOW_MAX_SIZE + u64::from(test_data_size % TEST_WINDOW_MAX_SIZE != 0);
+    
+    let test_window_count = test_data_size / TEST_WINDOW_MAX_SIZE + i64::from(test_data_size % TEST_WINDOW_MAX_SIZE != 0);
     let test_window_size = test_data_size / test_window_count;
     let test_window_size = test_window_size - test_window_size % TEST_WINDOW_SIZE_GRANULARITY;
     let test_data_size = test_window_size * test_window_count;
@@ -350,7 +380,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let test_buffer_create_info = vk::BufferCreateInfoBuilder::new()
         .sharing_mode(vk::SharingMode::EXCLUSIVE)
         .usage(vk::BufferUsageFlags::STORAGE_BUFFER)
-        .size(test_data_size);
+        .size(test_data_size as u64);
     let test_buffer = unsafe {device.create_buffer(&test_buffer_create_info, None)}.unwrap();
     let test_mem_reqs = unsafe {device.get_buffer_memory_requirements(test_buffer)};
     let test_mem_index = (0..memory_props.memory_type_count)
@@ -359,10 +389,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             let suitable = (test_mem_reqs.memory_type_bits & (1 << i)) != 0;
             let memory_type = memory_props.memory_types[*i as usize];
             let memory_heap = memory_props.memory_heaps[memory_type.heap_index as usize];
-            suitable && memory_heap.size >= test_data_size && memory_type.property_flags.contains(
+            suitable && memory_heap.size as i64 >= test_data_size && memory_type.property_flags.contains(
                 vk::MemoryPropertyFlags::DEVICE_LOCAL)
         }).ok_or("DEVICE_LOCAL test memory type not available")?;
-    println!("Test memory type: index {}: {:?} heap {:?}", test_mem_index, memory_props.memory_types[test_mem_index as usize], memory_props.memory_heaps[memory_props.memory_types[test_mem_index as usize].heap_index as usize]);
+    println!("Test memory size {:5.1}GB   type {:2}: {:?} {:?}", test_data_size as f32/GB, test_mem_index, memory_props.memory_types[test_mem_index as usize], memory_props.memory_heaps[memory_props.memory_types[test_mem_index as usize].heap_index as usize]);
 
     let test_memory_allocate_info = vk::MemoryAllocateInfoBuilder::new()
         .allocation_size(test_mem_reqs.size)
@@ -427,27 +457,19 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let create_info = vk::ShaderModuleCreateInfoBuilder::new().code(&spv_code);
     let shader_mod = unsafe { device.create_shader_module(&create_info, None) }.unwrap();
 
-    let read_entry_point = CString::new("read")?;
-    let read_shader_stage = vk::PipelineShaderStageCreateInfoBuilder::new()
+    let pipeline_infos = [c_str!("read"), c_str!("write"), c_str!("emulate_write_bugs")].map(|name|
+    {
+        let shader_stage = vk::PipelineShaderStageCreateInfoBuilder::new()
         .stage(vk::ShaderStageFlagBits::COMPUTE)
         .module(shader_mod)
-        .name(&read_entry_point);
-
-    let write_entry_point = CString::new("write")?;
-    let write_shader_stage = vk::PipelineShaderStageCreateInfoBuilder::new()
-        .stage(vk::ShaderStageFlagBits::COMPUTE)
-        .module(shader_mod)
-        .name(&write_entry_point);
-
-    let pipeline_info = &[vk::ComputePipelineCreateInfoBuilder::new()
+        .name(name);
+        vk::ComputePipelineCreateInfoBuilder::new()
         .layout(pipeline_layout)
-        .stage(*read_shader_stage),
-         vk::ComputePipelineCreateInfoBuilder::new()
-        .layout(pipeline_layout)
-        .stage(*write_shader_stage),        
-        ];
-    let pipelines_r_w =
-        unsafe { device.create_compute_pipelines(Default::default(), pipeline_info, None) }.unwrap();
+        .stage(*shader_stage)
+    });
+    
+    let pipelines_r_w_emul =
+        unsafe { device.create_compute_pipelines(Default::default(), &pipeline_infos, None) }.unwrap();
 
     let cmd_pool_info = vk::CommandPoolCreateInfoBuilder::new()
         .queue_family_index(queue_family)
@@ -467,7 +489,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let cmd_bufs = &[cmd_buf];
     let submit_info = &[vk::SubmitInfoBuilder::new().command_buffers(cmd_bufs)];
-    let execute_wait_queue = |buf_offset: u64, pipeline: vk::Pipeline| unsafe {
+    let execute_wait_queue = |buf_offset: i64, pipeline: vk::Pipeline| unsafe {
         device.update_descriptor_sets(
             &[
             vk::WriteDescriptorSetBuilder::new()
@@ -476,8 +498,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 .descriptor_type(vk::DescriptorType::STORAGE_BUFFER)
                 .buffer_info(&[vk::DescriptorBufferInfoBuilder::new()
                     .buffer(test_buffer)
-                    .offset(buf_offset)
-                    .range(test_window_size)]),
+                    .offset(buf_offset as u64)
+                    .range(test_window_size as u64)]),
             ],
             &[],
         );
@@ -491,15 +513,15 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             &[desc_set],
             &[],
         );
-        device.cmd_dispatch(cmd_buf, test_element_count/WG_SIZE as u32, 1, 1);
+        device.cmd_dispatch(cmd_buf, test_element_count/WG_SIZE as u32/VEC_SIZE as u32, 1, 1);
         device.end_command_buffer(cmd_buf).unwrap();
         device.queue_submit(queue, submit_info, fence).unwrap();
         device.wait_for_fences(&[fence], true, u64::MAX).unwrap();
         device.reset_fences(&[fence]).unwrap();
     };
     let iter_count = 100000000; //by default exit after several days of testing
-    let mut written_bytes = 0u64;
-    let mut read_bytes = 0u64;
+    let mut written_bytes = 0i64;
+    let mut read_bytes = 0i64;
     let mut next_report_duration = time::Duration::from_secs(0);
     let mut start = time::Instant::now();
     let stop_requested = Arc::new(AtomicBool::new(false));
@@ -514,22 +536,22 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         {
             let test_offset = test_window_size * window_idx;
             unsafe {
-                (*mapped).calc_param += window_idx as u32 * 0x81;
+                (*mapped).calc_param += window_idx as u32 * 0x81 as u32;
                 //let buffer_status = std::ptr::read(mapped);
                 //println!("writing {:?}", buffer_status);
             }
-            execute_wait_queue(test_offset, pipelines_r_w[1]);
+            execute_wait_queue(test_offset, pipelines_r_w_emul[1]); //use 2 for error simulation
             written_bytes += test_window_size;
         }
-        buffer_in.continue_iter_read(1);
+        buffer_in.continue_iter_read();
         for window_idx in 0..test_window_count
         {
-            buffer_in.calc_param += window_idx as u32 * 0x81;
+            buffer_in.calc_param += window_idx as u32 * 0x81 as u32;
             unsafe {
                 std::ptr::write(mapped, buffer_in);
             }
             let test_offset = test_window_size * window_idx;
-            execute_wait_queue(test_offset, pipelines_r_w[0]);
+            execute_wait_queue(test_offset, pipelines_r_w_emul[0]);
             read_bytes += test_window_size;
             {
                 let buffer_out : IOBuf;
@@ -548,7 +570,6 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         let stop_testing = stop_requested.load(SeqCst);
         if elapsed > next_report_duration || stop_testing
         {
-            const GB:f32 = (1024 * 1024 * 1024) as f32;
             let passed_secs = elapsed.as_secs_f32();
             let speed_gbps;
             if passed_secs > 0.0001
@@ -560,8 +581,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 speed_gbps = 0f32;
             }
             println!("{:7} iteration. Since last report passed {:15?} written {:6.1}GB, read: {:6.1}GB   {:6.1}GB/sec", iteration, elapsed, written_bytes as f32 / GB, read_bytes as f32 / GB, speed_gbps);
-            written_bytes = 0u64;
-            read_bytes = 0u64;
+            written_bytes = 0i64;
+            read_bytes = 0i64;
             let second1 = time::Duration::from_secs(1);
             if next_report_duration.is_zero()
             {
@@ -598,7 +619,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         device.unmap_memory(io_memory);
         device.free_memory(io_memory, None);
 
-        for pipeline in pipelines_r_w
+        for pipeline in pipelines_r_w_emul
         {
             device.destroy_pipeline(pipeline, None);
         }
