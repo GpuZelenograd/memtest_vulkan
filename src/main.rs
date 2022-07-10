@@ -1,6 +1,6 @@
 use erupt::{
     vk, DeviceLoader, EntryLoader, InstanceLoader,
-    extensions::{ext_debug_utils, ext_memory_budget},
+    extensions::{ext_debug_utils, ext_memory_budget, ext_pci_bus_info},
 };
 use byte_strings::c_str;
 use std::{
@@ -249,7 +249,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             device_layers.push(LAYER_KHRONOS_VALIDATION.as_ptr());
             instance
         })
-        .or_else(|_|{unsafe{InstanceLoader::new(&entry, &vk::InstanceCreateInfoBuilder::new())} //fallback creation without validation and extensions
+        .or_else(|_|{unsafe{InstanceLoader::new(&entry, &vk::InstanceCreateInfoBuilder::new().application_info(&app_info))} //fallback creation without validation and extensions
     })?;
 
     let mut compute_capable_devices : Vec<_> = unsafe { instance.enumerate_physical_devices(None) }
@@ -266,7 +266,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 None => return None,
             };
 
-            let properties = instance.get_physical_device_properties(physical_device);
+            let properties = instance.get_physical_device_properties2(physical_device, None).properties;
             Some((physical_device, queue_family, properties))
         }).collect();
     compute_capable_devices.sort_by_key(|(_, _, props)| match props.device_type {
@@ -303,14 +303,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let device = unsafe { DeviceLoader::new(&instance, physical_device, &device_create_info)}?;
     let queue = unsafe { device.get_device_queue(queue_family, 0) };
 
-    let memory_props = unsafe { instance.get_physical_device_memory_properties(physical_device) };
     let mut budget_structure : ext_memory_budget::PhysicalDeviceMemoryBudgetPropertiesEXT = Default::default();
-    if instance.get_physical_device_memory_properties2.is_some()
-    {
-        let mut budget_request = *vk::PhysicalDeviceMemoryProperties2Builder::new();
-        budget_request.p_next = &mut budget_structure as *mut ext_memory_budget::PhysicalDeviceMemoryBudgetPropertiesEXT as *mut c_void;
-        unsafe { instance.get_physical_device_memory_properties2(physical_device, Some(budget_request)) };
-    }
+    let mut budget_request = *vk::PhysicalDeviceMemoryProperties2Builder::new();
+    budget_request.p_next = &mut budget_structure as *mut ext_memory_budget::PhysicalDeviceMemoryBudgetPropertiesEXT as *mut c_void;
+    let memory_props = unsafe { instance.get_physical_device_memory_properties2(physical_device, Some(budget_request)) }.memory_properties;
 
     let mut test_data_size = 0i64;
     const TEST_DATA_KEEP_FREE:i64 = 400*1024*1024;
