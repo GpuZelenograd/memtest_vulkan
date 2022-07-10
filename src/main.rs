@@ -39,9 +39,6 @@ fn test_value_by_index(i:u32)->vec4<u32>
     return vec4<u32>(effective_index_of_u32, effective_index_of_u32 + 1u, effective_index_of_u32 + 2u, effective_index_of_u32 + 3u);
 }
 
-let ITER_CONFIRMATION_VALUE : u32 = 0x13FFFFCu;
-let ERROR_STATUS : u32 = 0xFFFFFFFFu;
-
 @compute @workgroup_size(64, 1, 1)
 fn read(@builtin(global_invocation_id) global_invocation_id: vec3<u32>) {
 
@@ -64,7 +61,7 @@ fn read(@builtin(global_invocation_id) global_invocation_id: vec3<u32>) {
             atomicAdd(&io.err_bitcount[one_bits % 32u], 1u);
             atomicMax(&io.idx_max, global_invocation_id[0] * 4u + i);
             atomicMin(&io.idx_min, global_invocation_id[0] * 4u + i);
-            atomicMax(&io.done_iter_or_err, ERROR_STATUS);
+            atomicMax(&io.done_iter_or_err, 0xFFFFFFFFu); //ERROR_STATUS
             let actual_bits = countOneBits(actual_u32);
             if actual_bits == 32
             {
@@ -79,7 +76,7 @@ fn read(@builtin(global_invocation_id) global_invocation_id: vec3<u32>) {
         }
     }
     //assign done_iter_or_err only on specific index (performance reasons)
-    if actual_value[0] == ITER_CONFIRMATION_VALUE {
+    if global_invocation_id[0] == 0 {
         atomicMax(&io.done_iter_or_err, io.iter);
     }
 }
@@ -160,15 +157,7 @@ impl IOBuf
     fn prepare_next_iter_write(&mut self)
     {
         self.reset_errors();
-        *self = IOBuf { 
-            iter: self.iter + 1,
-            calc_param: (self.iter + 1).wrapping_mul(0x100100),
-            ..*self
-        };
-        self.set_calc_param_for_starting_window();
-    }
-    fn continue_iter_read(&mut self)
-    {
+        self.iter += 1;
         self.set_calc_param_for_starting_window();
     }
     fn set_calc_param_for_starting_window(&mut self)
@@ -233,7 +222,6 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     instance_extensions.push(ext_debug_utils::EXT_DEBUG_UTILS_EXTENSION_NAME);
     instance_layers.push(LAYER_KHRONOS_VALIDATION.as_ptr());
-    device_layers.push(LAYER_KHRONOS_VALIDATION.as_ptr());
 
     let app_info = vk::ApplicationInfoBuilder::new().
         api_version(vk::API_VERSION_1_1);
@@ -242,24 +230,27 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         .enabled_layer_names(&instance_layers)
         .application_info(&app_info);
 
-    let instance = unsafe { InstanceLoader::new(&entry, &instance_create_info)}?;
-
-    let messenger = {
-        let create_info = ext_debug_utils::DebugUtilsMessengerCreateInfoEXTBuilder::new()
-            .message_severity(
-                ext_debug_utils::DebugUtilsMessageSeverityFlagsEXT::WARNING_EXT
-                    | ext_debug_utils::DebugUtilsMessageSeverityFlagsEXT::ERROR_EXT,
-                //ext_debug_utils::DebugUtilsMessageSeverityFlagsEXT::VERBOSE_EXT
-            )
-            .message_type(
-                ext_debug_utils::DebugUtilsMessageTypeFlagsEXT::GENERAL_EXT
-                    | ext_debug_utils::DebugUtilsMessageTypeFlagsEXT::VALIDATION_EXT
-                    | ext_debug_utils::DebugUtilsMessageTypeFlagsEXT::PERFORMANCE_EXT,
-            )
-            .pfn_user_callback(Some(debug_callback));
-
-        unsafe { instance.create_debug_utils_messenger_ext(&create_info, None) }.unwrap()
-    };
+    let mut messenger = Default::default();
+    let instance = unsafe { InstanceLoader::new(&entry, &instance_create_info)}
+        .map(|instance|{
+            let create_info = ext_debug_utils::DebugUtilsMessengerCreateInfoEXTBuilder::new()
+                .message_severity(
+                    ext_debug_utils::DebugUtilsMessageSeverityFlagsEXT::WARNING_EXT
+                        | ext_debug_utils::DebugUtilsMessageSeverityFlagsEXT::ERROR_EXT,
+                    //ext_debug_utils::DebugUtilsMessageSeverityFlagsEXT::VERBOSE_EXT
+                )
+                .message_type(
+                    ext_debug_utils::DebugUtilsMessageTypeFlagsEXT::GENERAL_EXT
+                        | ext_debug_utils::DebugUtilsMessageTypeFlagsEXT::VALIDATION_EXT
+                        | ext_debug_utils::DebugUtilsMessageTypeFlagsEXT::PERFORMANCE_EXT,
+                )
+                .pfn_user_callback(Some(debug_callback));
+            messenger = unsafe { instance.create_debug_utils_messenger_ext(&create_info, None) }.unwrap();
+            device_layers.push(LAYER_KHRONOS_VALIDATION.as_ptr());
+            instance
+        })
+        .or_else(|_|{unsafe{InstanceLoader::new(&entry, &vk::InstanceCreateInfoBuilder::new())} //fallback creation without validation and extensions
+    })?;
 
     let mut compute_capable_devices : Vec<_> = unsafe { instance.enumerate_physical_devices(None) }
         .unwrap()
@@ -301,27 +292,25 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         CStr::from_ptr(props.device_name.as_ptr())
     });
 
-    //budget_request.s_type = vk::StructureType::PHYSICAL_DEVICE_MEMORY_BUDGET_PROPERTIES_EXT;
-    //let memory_props_budget = unsafe { instance.get_physical_device_memory_properties2(physical_device, Some(budget_request)) };
-
     let queue_create_info = vec![vk::DeviceQueueCreateInfoBuilder::new()
         .queue_family_index(queue_family)
         .queue_priorities(&[1.0])];
-    let features = vk::PhysicalDeviceFeaturesBuilder::new();
 
     let device_create_info = vk::DeviceCreateInfoBuilder::new()
         .queue_create_infos(&queue_create_info)
-        .enabled_features(&features)
         .enabled_layer_names(&device_layers);
 
     let device = unsafe { DeviceLoader::new(&instance, physical_device, &device_create_info)}?;
     let queue = unsafe { device.get_device_queue(queue_family, 0) };
 
+    let memory_props = unsafe { instance.get_physical_device_memory_properties(physical_device) };
     let mut budget_structure : ext_memory_budget::PhysicalDeviceMemoryBudgetPropertiesEXT = Default::default();
-    let mut budget_request = *vk::PhysicalDeviceMemoryProperties2Builder::new();
-    budget_request.p_next = &mut budget_structure as *mut ext_memory_budget::PhysicalDeviceMemoryBudgetPropertiesEXT as *mut c_void;
-    let memory_props2 = unsafe { instance.get_physical_device_memory_properties2(physical_device, Some(budget_request)) };
-    let memory_props = memory_props2.memory_properties;
+    if instance.get_physical_device_memory_properties2.is_some()
+    {
+        let mut budget_request = *vk::PhysicalDeviceMemoryProperties2Builder::new();
+        budget_request.p_next = &mut budget_structure as *mut ext_memory_budget::PhysicalDeviceMemoryBudgetPropertiesEXT as *mut c_void;
+        unsafe { instance.get_physical_device_memory_properties2(physical_device, Some(budget_request)) };
+    }
 
     let mut test_data_size = 0i64;
     const TEST_DATA_KEEP_FREE:i64 = 400*1024*1024;
@@ -373,6 +362,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     
     let test_window_count = test_data_size / TEST_WINDOW_MAX_SIZE + i64::from(test_data_size % TEST_WINDOW_MAX_SIZE != 0);
+    let test_window_count = max(test_window_count, 2); //at least 2 windows: for testing rereads and rws
     let test_window_size = test_data_size / test_window_count;
     let test_window_size = test_window_size - test_window_size % TEST_WINDOW_SIZE_GRANULARITY;
     let test_data_size = test_window_size * test_window_count;
@@ -525,30 +515,39 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let mut next_report_duration = time::Duration::from_secs(0);
     let mut start = time::Instant::now();
     let stop_requested = Arc::new(AtomicBool::new(false));
+    let mut buffer_in = IOBuf::default();
     for iteration in 1..=iter_count
     {
-        let mut buffer_in = IOBuf::default();
         buffer_in.prepare_next_iter_write();
         unsafe {
             std::ptr::write(mapped, buffer_in)
         }
-        for window_idx in 0..test_window_count
+        let reread_mode_for_win_0 = iteration > 1;//don't write into win 0
+        for window_idx in (reread_mode_for_win_0 as i64)..test_window_count
         {
             let test_offset = test_window_size * window_idx;
             unsafe {
-                (*mapped).calc_param += window_idx as u32 * 0x81 as u32;
-                //let buffer_status = std::ptr::read(mapped);
-                //println!("writing {:?}", buffer_status);
+                (*mapped).calc_param = buffer_in.calc_param + window_idx as u32 * 0x81 as u32;
             }
             execute_wait_queue(test_offset, pipelines_r_w_emul[1]); //use 2 for error simulation
             written_bytes += test_window_size;
         }
-        buffer_in.continue_iter_read();
+        buffer_in.set_calc_param_for_starting_window();
         for window_idx in 0..test_window_count
         {
+            let reread_mode_for_this_win = reread_mode_for_win_0 && window_idx == 0;
             buffer_in.calc_param += window_idx as u32 * 0x81 as u32;
             unsafe {
-                std::ptr::write(mapped, buffer_in);
+                std::ptr::write(mapped,
+                    if reread_mode_for_this_win
+                    {
+                        let mut io_buf = IOBuf::default();
+                        io_buf.prepare_next_iter_write();
+                        io_buf
+                    } else {
+                        buffer_in
+                    }
+                );
             }
             let test_offset = test_window_size * window_idx;
             execute_wait_queue(test_offset, pipelines_r_w_emul[0]);
@@ -561,7 +560,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 if let Some(error) = buffer_out.get_error_addresses(test_offset)
                 {
                     println!("{:?}", buffer_out);
-                    println!("error addresses: {:?}", error);
+                    println!("Error found. Mode {}, addresses: {:?}",
+                        if reread_mode_for_this_win {"NEXT_RE_READ"}
+                        else                        {"INITIAL_READ"},
+                        error);
                     
                 }
             }
@@ -631,7 +633,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         device.destroy_shader_module(shader_mod, None);
         device.destroy_device(None);
 
-        instance.destroy_debug_utils_messenger_ext(messenger, None);
+        if !messenger.is_null() {
+            instance.destroy_debug_utils_messenger_ext(messenger, None);
+        }
         instance.destroy_instance(None);
     }
 
