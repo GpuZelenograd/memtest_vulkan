@@ -5,6 +5,7 @@ version = "0.0.1"
 edition = "2021"
 
 [dependencies]
+ctrlc = { version = "3.2.2"}
 erupt = { version = "0.22", default-features = false, features = ["loading"] }
 memtest_vulkan_build = { path = "./memtest_vulkan_build"}
 
