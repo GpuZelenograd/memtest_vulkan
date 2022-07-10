@@ -26,7 +26,6 @@ struct IOBuf
     idx_max: u32,
     idx_min: u32,
     done_iter_or_err: u32,
-    write_do: u32,
     read_do: u32,
     iter: u32,
     calc_param: u32,
@@ -37,58 +36,59 @@ struct IOBuf
 
 fn test_value_by_index(i:u32)->u32
 {
-    let result = i + io.calc_param;
     /*
     if io.read_do != 0 && i == 0xADBAD/4
     {
-        return result ^ 4;//error simulation for test
+        return (i + io.calc_param) ^ 4;//error simulation for test
     }
     */
-    return result;
+    return i + io.calc_param;
+}
+
+let ITER_CONFIRMATION_VALUE : u32 = 0x1FFFFFFu;
+let ERROR_STATUS : u32 = 0xFFFFFFFFu;
+
+@compute @workgroup_size(128, 1, 1)
+fn read(@builtin(global_invocation_id) global_invocation_id: vec3<u32>) {
+
+    let actual_value = test[global_invocation_id[0]];
+    if actual_value != test_value_by_index(global_invocation_id[0]) {
+        //slow path, executed only on errors found
+        let error_mask = actual_value ^ test_value_by_index(global_invocation_id[0]);
+        let one_bits = countOneBits(error_mask);
+        if one_bits == 1
+        {
+            let bit_idx = firstLeadingBit(error_mask);
+            atomicAdd(&io.err_bit1_idx[bit_idx], 1u);
+        }
+        atomicAdd(&io.err_bitcount[one_bits % 32u], 1u);
+        atomicMax(&io.idx_max, global_invocation_id[0]);
+        atomicMin(&io.idx_min, global_invocation_id[0]);
+        atomicMax(&io.done_iter_or_err, ERROR_STATUS);
+        let actual_bits = countOneBits(actual_value);
+        if actual_bits == 32
+        {
+            atomicAdd(&io.actual_ff, 1u);
+        }
+        else
+        {
+            atomicAdd(&io.actual_bitcount[actual_bits], 1u);
+            atomicMax(&io.actual_max, actual_value);
+            atomicMin(&io.actual_min, actual_value);
+        }
+    }
+    //assign done_iter_or_err only on specific index (performance reasons)
+    if actual_value == ITER_CONFIRMATION_VALUE {
+        atomicMax(&io.done_iter_or_err, io.iter);
+    }
 }
 
 @compute @workgroup_size(128, 1, 1)
-fn main(@builtin(global_invocation_id) global_invocation_id: vec3<u32>) {
-    let ITER_CONFIRMATION_VALUE : u32 = 0x1FFFFFFu;
-    let ERROR_STATUS : u32 = 0xFFFFFFFFu;
-
-    let test_idx = global_invocation_id[0];
-    if io.read_do != 0 {
-        let expected_value = test_value_by_index(test_idx);
-        let actual_value = test[global_invocation_id[0]];
-        if actual_value != expected_value {
-            //slow path, executed only on errors found
-            let error_mask = actual_value ^ expected_value;
-            let one_bits = countOneBits(error_mask);
-            if one_bits == 1
-            {
-                let bit_idx = firstLeadingBit(error_mask);
-                atomicAdd(&io.err_bit1_idx[bit_idx], 1u);
-            }
-            atomicAdd(&io.err_bitcount[one_bits % 32u], 1u);
-            atomicMax(&io.idx_max, test_idx);
-            atomicMin(&io.idx_min, test_idx);
-            atomicMax(&io.done_iter_or_err, ERROR_STATUS);
-            let actual_bits = countOneBits(actual_value);
-            if actual_bits == 32
-            {
-                atomicAdd(&io.actual_ff, 1u);
-            }
-            else
-            {
-                atomicAdd(&io.actual_bitcount[actual_bits], 1u);
-                atomicMax(&io.actual_max, actual_value);
-                atomicMin(&io.actual_min, actual_value);
-            }
-        }
-        //assign done_iter_or_err only on specific index (performance reasons)
-        if expected_value == ITER_CONFIRMATION_VALUE {
-            atomicMax(&io.done_iter_or_err, io.iter);
-        }
-    } else if io.write_do != 0 {
-        test[global_invocation_id[0]] = test_value_by_index(global_invocation_id[0]);
-    }
+fn write(@builtin(global_invocation_id) global_invocation_id: vec3<u32>) {
+    test[global_invocation_id[0]] = test_value_by_index(global_invocation_id[0]);
 }
+
+
 "#);
 
 const WG_SIZE:u64 = 128;
@@ -143,7 +143,6 @@ struct IOBuf
     idx_max: u32,
     idx_min: u32,
     done_iter_or_err: u32,
-    write_do: u32,
     read_do: u32,
     iter: u32,
     calc_param: u32
@@ -157,7 +156,6 @@ impl IOBuf
         *self = IOBuf { 
             iter: self.iter + 1,
             read_do : 0,
-            write_do : 1,
             calc_param: (self.iter + 1).wrapping_mul(0x1000100),
             ..*self
         };
@@ -165,7 +163,6 @@ impl IOBuf
     }
     fn continue_iter_read(&mut self, read_do:u32)
     {
-        self.write_do = 0;
         self.read_do = read_do;
         self.set_calc_param_for_starting_window();
     }
@@ -177,7 +174,6 @@ impl IOBuf
     {
         *self = IOBuf { 
             iter: self.iter,
-            write_do : self.write_do,
             read_do : self.read_do,
             calc_param: self.calc_param,
             idx_max : u32::MIN,
@@ -427,21 +423,31 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let pipeline_layout =
         unsafe { device.create_pipeline_layout(&pipeline_layout_info, None) }.unwrap();
 
-    let read_spv_code = Vec::from(READ_SHADER);
-    let read_create_info = vk::ShaderModuleCreateInfoBuilder::new().code(&read_spv_code);
-    let read_shader_mod = unsafe { device.create_shader_module(&read_create_info, None) }.unwrap();
+    let spv_code = Vec::from(READ_SHADER);
+    let create_info = vk::ShaderModuleCreateInfoBuilder::new().code(&spv_code);
+    let shader_mod = unsafe { device.create_shader_module(&create_info, None) }.unwrap();
 
-    let entry_point = CString::new("main")?;
+    let read_entry_point = CString::new("read")?;
     let read_shader_stage = vk::PipelineShaderStageCreateInfoBuilder::new()
         .stage(vk::ShaderStageFlagBits::COMPUTE)
-        .module(read_shader_mod)
-        .name(&entry_point);
+        .module(shader_mod)
+        .name(&read_entry_point);
+
+    let write_entry_point = CString::new("write")?;
+    let write_shader_stage = vk::PipelineShaderStageCreateInfoBuilder::new()
+        .stage(vk::ShaderStageFlagBits::COMPUTE)
+        .module(shader_mod)
+        .name(&write_entry_point);
 
     let pipeline_info = &[vk::ComputePipelineCreateInfoBuilder::new()
         .layout(pipeline_layout)
-        .stage(*read_shader_stage)];
-    let pipeline =
-        unsafe { device.create_compute_pipelines(Default::default(), pipeline_info, None) }.unwrap()[0];
+        .stage(*read_shader_stage),
+         vk::ComputePipelineCreateInfoBuilder::new()
+        .layout(pipeline_layout)
+        .stage(*write_shader_stage),        
+        ];
+    let pipelines_r_w =
+        unsafe { device.create_compute_pipelines(Default::default(), pipeline_info, None) }.unwrap();
 
     let cmd_pool_info = vk::CommandPoolCreateInfoBuilder::new()
         .queue_family_index(queue_family)
@@ -461,7 +467,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let cmd_bufs = &[cmd_buf];
     let submit_info = &[vk::SubmitInfoBuilder::new().command_buffers(cmd_bufs)];
-    let execute_wait_queue = |buf_offset: u64| unsafe {
+    let execute_wait_queue = |buf_offset: u64, pipeline: vk::Pipeline| unsafe {
         device.update_descriptor_sets(
             &[
             vk::WriteDescriptorSetBuilder::new()
@@ -512,7 +518,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 //let buffer_status = std::ptr::read(mapped);
                 //println!("writing {:?}", buffer_status);
             }
-            execute_wait_queue(test_offset);
+            execute_wait_queue(test_offset, pipelines_r_w[1]);
             written_bytes += test_window_size;
         }
         buffer_in.continue_iter_read(1);
@@ -523,7 +529,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 std::ptr::write(mapped, buffer_in);
             }
             let test_offset = test_window_size * window_idx;
-            execute_wait_queue(test_offset);
+            execute_wait_queue(test_offset, pipelines_r_w[0]);
             read_bytes += test_window_size;
             {
                 let buffer_out : IOBuf;
@@ -592,13 +598,16 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         device.unmap_memory(io_memory);
         device.free_memory(io_memory, None);
 
-        device.destroy_pipeline(pipeline, None);
+        for pipeline in pipelines_r_w
+        {
+            device.destroy_pipeline(pipeline, None);
+        }
         device.destroy_pipeline_layout(pipeline_layout, None);
         device.destroy_command_pool(cmd_pool, None);
         device.destroy_fence(fence, None);
         device.destroy_descriptor_set_layout(desc_layout, None);
         device.destroy_descriptor_pool(desc_pool, None);
-        device.destroy_shader_module(read_shader_mod, None);
+        device.destroy_shader_module(shader_mod, None);
         device.destroy_device(None);
 
         instance.destroy_debug_utils_messenger_ext(messenger, None);
