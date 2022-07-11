@@ -623,7 +623,11 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 None => return None,
             };
 
-            let properties = instance.get_physical_device_properties2(physical_device, None).properties;
+            let mut pci_props_structure : ext_pci_bus_info::PhysicalDevicePCIBusInfoPropertiesEXT = Default::default();
+            let mut pci_structure_request = *vk::PhysicalDeviceProperties2Builder::new();
+            pci_structure_request.p_next = &mut pci_props_structure as *mut ext_pci_bus_info::PhysicalDevicePCIBusInfoPropertiesEXT as *mut c_void;
+
+            let properties = instance.get_physical_device_properties2(physical_device, Some(pci_structure_request)).properties;
             let memory_props = instance.get_physical_device_memory_properties(physical_device);
 
             let mut max_local_heap_size = 0i64;
@@ -636,17 +640,23 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 max_local_heap_size = max(max_local_heap_size, memory_props.memory_heaps[i].size as i64);
             }
 
-            Some((physical_device, queue_family, properties, max_local_heap_size))
+            Some((physical_device, queue_family, properties, max_local_heap_size, pci_props_structure))
         }).collect();
-    compute_capable_devices.sort_by_key(|(_, _, props, _)| match props.device_type {
-            vk::PhysicalDeviceType::DISCRETE_GPU => 0,
-            vk::PhysicalDeviceType::INTEGRATED_GPU => 1,
-            _ => 2,
+    compute_capable_devices.sort_by_key(|(_, _, props, _, pci_props)|{
+        let negative_bus_for_reverse_ordering = -(pci_props.pci_bus as i32);
+        match props.device_type {
+                vk::PhysicalDeviceType::DISCRETE_GPU => (0, negative_bus_for_reverse_ordering),
+                vk::PhysicalDeviceType::INTEGRATED_GPU => (1, negative_bus_for_reverse_ordering),
+                _ => (2, negative_bus_for_reverse_ordering),
+            }
         });
     for (i, d) in compute_capable_devices.iter().enumerate()
     {
         let props = d.2;
-        println!("{}: DevId 0x{:04X} API v.{}.{}.{}  {}GB {}", i+1,
+        let pci_props = d.4;
+        println!("{}: Bus=0x{:02X}:{:02X} DevId=0x{:04X} API v.{}.{}.{}  {}GB {}", i+1,
+            pci_props.pci_bus,
+            pci_props.pci_device,
             props.device_id,
             vk::api_version_major(props.api_version),
             vk::api_version_minor(props.api_version),
@@ -710,7 +720,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     if let Some(selected_index) = device_test_index
     {
-        let (physical_device, queue_family, props, _max_local_heap_size) =
+        let (physical_device, queue_family, props, _max_local_heap_size, _pci_props_structure) =
                 *(compute_capable_devices.get(selected_index).expect("No suitable physical device found"));
 
         println!("Using physical device: {}", unsafe {
