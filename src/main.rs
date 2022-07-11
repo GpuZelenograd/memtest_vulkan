@@ -1,3 +1,5 @@
+mod input;
+
 use erupt::{
     vk, DeviceLoader, EntryLoader, InstanceLoader,
     extensions::{ext_debug_utils, ext_memory_budget, ext_pci_bus_info},
@@ -208,102 +210,10 @@ unsafe extern "system" fn debug_callback(
     vk::FALSE
 }
 
-
-fn main() -> Result<(), Box<dyn std::error::Error>> {
-    let entry = EntryLoader::new()?;
-    println!(
-        "Running https://github.com/galkinvv/memtest_vulkan on Vulkan Instance {}.{}.{} Precc Ctrl+C to stop",
-        vk::api_version_major(entry.instance_version()),
-        vk::api_version_minor(entry.instance_version()),
-        vk::api_version_patch(entry.instance_version())
-    );
-
-    let mut instance_extensions = Vec::new();
-    let mut instance_layers = Vec::new();
-    let mut device_layers = Vec::new();
-
-    instance_extensions.push(ext_debug_utils::EXT_DEBUG_UTILS_EXTENSION_NAME);
-    instance_layers.push(LAYER_KHRONOS_VALIDATION.as_ptr());
-
-    let app_info = vk::ApplicationInfoBuilder::new().
-        api_version(vk::API_VERSION_1_1);
-    let instance_create_info = vk::InstanceCreateInfoBuilder::new()
-        .enabled_extension_names(&instance_extensions)
-        .enabled_layer_names(&instance_layers)
-        .application_info(&app_info);
-
-    let mut messenger = Default::default();
-    let instance = unsafe { InstanceLoader::new(&entry, &instance_create_info)}
-        .map(|instance|{
-            let create_info = ext_debug_utils::DebugUtilsMessengerCreateInfoEXTBuilder::new()
-                .message_severity(
-                    ext_debug_utils::DebugUtilsMessageSeverityFlagsEXT::WARNING_EXT
-                        | ext_debug_utils::DebugUtilsMessageSeverityFlagsEXT::ERROR_EXT,
-                    //ext_debug_utils::DebugUtilsMessageSeverityFlagsEXT::VERBOSE_EXT
-                )
-                .message_type(
-                    ext_debug_utils::DebugUtilsMessageTypeFlagsEXT::GENERAL_EXT
-                        | ext_debug_utils::DebugUtilsMessageTypeFlagsEXT::VALIDATION_EXT
-                        | ext_debug_utils::DebugUtilsMessageTypeFlagsEXT::PERFORMANCE_EXT,
-                )
-                .pfn_user_callback(Some(debug_callback));
-            messenger = unsafe { instance.create_debug_utils_messenger_ext(&create_info, None) }.unwrap();
-            device_layers.push(LAYER_KHRONOS_VALIDATION.as_ptr());
-            instance
-        })
-        .or_else(|_|{unsafe{InstanceLoader::new(&entry, &vk::InstanceCreateInfoBuilder::new().application_info(&app_info))} //fallback creation without validation and extensions
-    })?;
-
-    let mut compute_capable_devices : Vec<_> = unsafe { instance.enumerate_physical_devices(None) }
-        .unwrap()
-        .into_iter()
-        .filter_map(|physical_device| unsafe {
-            let queue_family = match instance
-                .get_physical_device_queue_family_properties(physical_device, None)
-                .into_iter()
-                .position(|properties| {
-                    properties.queue_flags.contains(vk::QueueFlags::COMPUTE)
-                }) {
-                Some(queue_family) => queue_family as u32,
-                None => return None,
-            };
-
-            let properties = instance.get_physical_device_properties2(physical_device, None).properties;
-            Some((physical_device, queue_family, properties))
-        }).collect();
-    compute_capable_devices.sort_by_key(|(_, _, props)| match props.device_type {
-            vk::PhysicalDeviceType::DISCRETE_GPU => 0,
-            vk::PhysicalDeviceType::INTEGRATED_GPU => 1,
-            _ => 2,
-        });
-    for (i, d) in compute_capable_devices.iter().enumerate()
-    {
-        let props = d.2;
-        println!("{:10}{}: DevId 0x{:04X} API version {}.{}.{}  {:?}", if i == 0 {"SELECTED"}else{""}, i,
-            props.device_id,
-            vk::api_version_major(props.api_version),
-            vk::api_version_minor(props.api_version),
-            vk::api_version_patch(props.api_version),
-            unsafe { CStr::from_ptr(props.device_name.as_ptr()) },
-            );
-    }
-    let (physical_device, queue_family, props) =
-            *(compute_capable_devices.first().expect("No suitable physical device found"));
-
-    println!("Using physical device: {:?}", unsafe {
-        CStr::from_ptr(props.device_name.as_ptr())
-    });
-
-    let queue_create_info = vec![vk::DeviceQueueCreateInfoBuilder::new()
-        .queue_family_index(queue_family)
-        .queue_priorities(&[1.0])];
-
-    let device_create_info = vk::DeviceCreateInfoBuilder::new()
-        .queue_create_infos(&queue_create_info)
-        .enabled_layer_names(&device_layers);
-
+fn test_device(instance: &erupt::InstanceLoader, physical_device: vk::PhysicalDevice, queue_family_index: u32, device_create_info: vk::DeviceCreateInfo)-> Result<(), Box<dyn std::error::Error>>
+{
     let device = unsafe { DeviceLoader::new(&instance, physical_device, &device_create_info)}?;
-    let queue = unsafe { device.get_device_queue(queue_family, 0) };
+    let queue = unsafe { device.get_device_queue(queue_family_index, 0) };
 
     let mut budget_structure : ext_memory_budget::PhysicalDeviceMemoryBudgetPropertiesEXT = Default::default();
     let mut budget_request = *vk::PhysicalDeviceMemoryProperties2Builder::new();
@@ -356,7 +266,6 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let mapped: *mut IOBuf = unsafe{mem::transmute(device.map_memory(io_memory, 0, vk::WHOLE_SIZE, vk::MemoryMapFlags::default()).unwrap())};
     unsafe{device.bind_buffer_memory(io_buffer, io_memory, 0)}.unwrap();
-
 
     let test_buffer_create_info = vk::BufferCreateInfoBuilder::new()
         .sharing_mode(vk::SharingMode::EXCLUSIVE)
@@ -477,7 +386,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         unsafe { device.create_compute_pipelines(Default::default(), &pipeline_infos, None) }.unwrap();
 
     let cmd_pool_info = vk::CommandPoolCreateInfoBuilder::new()
-        .queue_family_index(queue_family)
+        .queue_family_index(queue_family_index)
         .flags(vk::CommandPoolCreateFlags::RESET_COMMAND_BUFFER);
     let cmd_pool = unsafe { device.create_command_pool(&cmd_pool_info, None) }.unwrap();
 
@@ -647,6 +556,170 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         device.destroy_descriptor_pool(desc_pool, None);
         device.destroy_shader_module(shader_mod, None);
         device.destroy_device(None);
+    }
+
+    Ok(())
+}
+
+fn main() -> Result<(), Box<dyn std::error::Error>> {
+    let entry = EntryLoader::new()?;
+    println!(
+        "https://github.com/galkinvv/memtest_vulkan by GpuZelenograd"
+    );
+    println!("Runing on Vulkan {}.{}.{} Press Ctrl+C to stop",
+        vk::api_version_major(entry.instance_version()),
+        vk::api_version_minor(entry.instance_version()),
+        vk::api_version_patch(entry.instance_version())
+        );
+    println!();
+
+    let mut instance_extensions = Vec::new();
+    let mut instance_layers = Vec::new();
+    let mut device_layers = Vec::new();
+
+    instance_extensions.push(ext_debug_utils::EXT_DEBUG_UTILS_EXTENSION_NAME);
+    instance_layers.push(LAYER_KHRONOS_VALIDATION.as_ptr());
+
+    let app_info = vk::ApplicationInfoBuilder::new().
+        api_version(vk::API_VERSION_1_1);
+    let instance_create_info = vk::InstanceCreateInfoBuilder::new()
+        .enabled_extension_names(&instance_extensions)
+        .enabled_layer_names(&instance_layers)
+        .application_info(&app_info);
+
+    let mut messenger = Default::default();
+    let instance = unsafe { InstanceLoader::new(&entry, &instance_create_info)}
+        .map(|instance|{
+            let create_info = ext_debug_utils::DebugUtilsMessengerCreateInfoEXTBuilder::new()
+                .message_severity(
+                    ext_debug_utils::DebugUtilsMessageSeverityFlagsEXT::WARNING_EXT
+                        | ext_debug_utils::DebugUtilsMessageSeverityFlagsEXT::ERROR_EXT,
+                    //ext_debug_utils::DebugUtilsMessageSeverityFlagsEXT::VERBOSE_EXT
+                )
+                .message_type(
+                    ext_debug_utils::DebugUtilsMessageTypeFlagsEXT::GENERAL_EXT
+                        | ext_debug_utils::DebugUtilsMessageTypeFlagsEXT::VALIDATION_EXT
+                        | ext_debug_utils::DebugUtilsMessageTypeFlagsEXT::PERFORMANCE_EXT,
+                )
+                .pfn_user_callback(Some(debug_callback));
+            messenger = unsafe { instance.create_debug_utils_messenger_ext(&create_info, None) }.unwrap();
+            device_layers.push(LAYER_KHRONOS_VALIDATION.as_ptr());
+            instance
+        })
+        .or_else(|_|{unsafe{InstanceLoader::new(&entry, &vk::InstanceCreateInfoBuilder::new().application_info(&app_info))} //fallback creation without validation and extensions
+    })?;
+
+    let mut compute_capable_devices : Vec<_> = unsafe { instance.enumerate_physical_devices(None) }
+        .unwrap()
+        .into_iter()
+        .filter_map(|physical_device| unsafe {
+            let queue_family = match instance
+                .get_physical_device_queue_family_properties(physical_device, None)
+                .into_iter()
+                .position(|properties| {
+                    properties.queue_flags.contains(vk::QueueFlags::COMPUTE)
+                }) {
+                Some(queue_family) => queue_family as u32,
+                None => return None,
+            };
+
+            let properties = instance.get_physical_device_properties2(physical_device, None).properties;
+            Some((physical_device, queue_family, properties))
+        }).collect();
+    compute_capable_devices.sort_by_key(|(_, _, props)| match props.device_type {
+            vk::PhysicalDeviceType::DISCRETE_GPU => 0,
+            vk::PhysicalDeviceType::INTEGRATED_GPU => 1,
+            _ => 2,
+        });
+    for (i, d) in compute_capable_devices.iter().enumerate()
+    {
+        let props = d.2;
+        println!("{}: DevId 0x{:04X} API version {}.{}.{}  {:?}", i+1,
+            props.device_id,
+            vk::api_version_major(props.api_version),
+            vk::api_version_minor(props.api_version),
+            vk::api_version_patch(props.api_version),
+            unsafe { CStr::from_ptr(props.device_name.as_ptr()) },
+            );
+    }
+    
+    let mut device_test_index = Some(0usize);
+    let prompt_start = time::Instant::now();
+    let mut prompt_duration : Option<time::Duration> = Some(time::Duration::from_secs(10));
+
+    let mut digit_reader = input::DigitReader::default();
+    let no_timer_prompt = String::from("                                                   Enter index to test:");
+    loop
+    {
+        let mut prompt = &no_timer_prompt;
+        let formatted_prompt: String;
+        if let Some(effective_duration) = prompt_duration
+        {
+            if effective_duration < prompt_start.elapsed()
+            {
+                println!("");
+                println!("    ...first device autoselected");
+                break;
+            }
+            else
+            {
+                let duration_left = effective_duration - prompt_start.elapsed();
+                formatted_prompt = std::format!("(first device will be autoselected in {} seconds)   Enter index to test:", duration_left.as_secs());
+                prompt = &formatted_prompt;
+            }
+        }
+        match digit_reader.input_step(prompt, &time::Duration::from_millis(250))?
+        {
+            input::ReaderEvent::Edited => prompt_duration = None,
+            input::ReaderEvent::Canceled => {
+                println!("");
+                device_test_index = None;
+                break;
+            }
+            input::ReaderEvent::Completed =>
+            {
+                println!("");
+                if !digit_reader.current_input.is_empty()
+                {
+                    let mut parsed = digit_reader.current_input.parse::<usize>().unwrap();
+                    if parsed > 0
+                    {
+                        parsed -= 1;
+                    }
+                    device_test_index = Some(parsed);
+                }
+                break;
+            }
+            input::ReaderEvent::Timeout => {} //just redraw prompt
+        }
+    }
+    drop(digit_reader);
+
+    if let Some(selected_index) = device_test_index
+    {
+        let (physical_device, queue_family, props) =
+                *(compute_capable_devices.get(selected_index).expect("No suitable physical device found"));
+
+        println!("Using physical device: {:?}", unsafe {
+            CStr::from_ptr(props.device_name.as_ptr())
+        });
+
+        let queue_create_info = vec![vk::DeviceQueueCreateInfoBuilder::new()
+            .queue_family_index(queue_family)
+            .queue_priorities(&[1.0])];
+
+        let device_create_info = vk::DeviceCreateInfoBuilder::new()
+            .queue_create_infos(&queue_create_info)
+            .enabled_layer_names(&device_layers);
+
+        test_device(&instance, physical_device, queue_family, *device_create_info)?;
+    }
+    else
+    {
+        println!("Test cancelled, no device selected");
+    }
+
+    unsafe{
 
         if !messenger.is_null() {
             instance.destroy_debug_utils_messenger_ext(messenger, None);
