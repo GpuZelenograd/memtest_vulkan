@@ -1,23 +1,27 @@
 #!/usr/bin/env -Scargo run --release --manifest-path
 [package]
-name = "memtest_vulkan"
-version = "0.0.1"
-edition = "2021"
+edition = '2021'
+name = 'memtest_vulkan'
+version = '0.0.1'
 
 [dependencies]
-ctrlc = {version = "3.2.2"}
-byte-strings = {version = "0.2.2"}
-mortal = {version = "0.2.3"}
-erupt = {version = "0.22", default-features = false, features = ["loading"] }
-memtest_vulkan_build = {path = "./memtest_vulkan_build"}
+byte-strings = '0.2.2'
+ctrlc = '3.2.2'
+mortal = '0.2.3'
+
+[dependencies.erupt]
+default-features = false
+features = ['loading']
+version = '0.22'
+
+[dependencies.memtest_vulkan_build]
+path = './memtest_vulkan_build'
 
 [workspace]
-members = [
-    "memtest_vulkan_build",
-]
+members = ['memtest_vulkan_build']
 
-[profile.release]
 # produce small file size release builds
-strip = true
-lto = true
+[profile.release]
 codegen-units = 1
+lto = true
+strip = true

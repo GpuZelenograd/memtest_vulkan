@@ -1,12 +1,19 @@
 [package]
-name = "memtest_vulkan_build"
-version = "0.0.0"
-edition = "2021"
+edition = '2021'
+name = 'memtest_vulkan_build'
+version = '0.0.0'
 
 [dependencies]
-syn = "1.0"
-quote = "1.0"
-naga = { version = "0.9", default-features = false, features = ["wgsl-in", "spv-out"]}
+quote = '1.0'
+syn = '1.0'
+
+[dependencies.naga]
+default-features = false
+features = [
+    'wgsl-in',
+    'spv-out',
+]
+version = '0.9'
 
 [lib]
 proc-macro = true
