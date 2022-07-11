@@ -101,6 +101,8 @@ const ELEMENT_SIZE: i64 = std::mem::size_of::<u32>() as i64;
 const ELEMENT_BIT_SIZE: usize = (ELEMENT_SIZE * 8) as usize;
 const TEST_WINDOW_SIZE_GRANULARITY: i64 = WG_SIZE * ELEMENT_SIZE;
 const TEST_WINDOW_MAX_SIZE: i64= 4*1024*1024*1024 - WG_SIZE * ELEMENT_SIZE;
+const TEST_DATA_KEEP_FREE:i64 = 400*1024*1024;
+
 
 
 #[derive(Default)]
@@ -308,8 +310,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     budget_request.p_next = &mut budget_structure as *mut ext_memory_budget::PhysicalDeviceMemoryBudgetPropertiesEXT as *mut c_void;
     let memory_props = unsafe { instance.get_physical_device_memory_properties2(physical_device, Some(budget_request)) }.memory_properties;
 
-    let mut test_data_size = 0i64;
-    const TEST_DATA_KEEP_FREE:i64 = 400*1024*1024;
+    let mut allocation_size = 0i64;
     for i in 0..memory_props.memory_heap_count as usize
     {
         if !memory_props.memory_heaps[i].flags.contains(vk::MemoryHeapFlags::DEVICE_LOCAL)
@@ -327,7 +328,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         {
             heap_free = min(heap_free, budget);
         }
-        test_data_size = max(test_data_size, heap_free - TEST_DATA_KEEP_FREE);
+        allocation_size = max(allocation_size, heap_free - TEST_DATA_KEEP_FREE);
     }
 
     let io_data_size = mem::size_of::<IOBuf>() as vk::DeviceSize;
@@ -356,34 +357,52 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let mapped: *mut IOBuf = unsafe{mem::transmute(device.map_memory(io_memory, 0, vk::WHOLE_SIZE, vk::MemoryMapFlags::default()).unwrap())};
     unsafe{device.bind_buffer_memory(io_buffer, io_memory, 0)}.unwrap();
 
-    
-    let test_window_count = test_data_size / TEST_WINDOW_MAX_SIZE + i64::from(test_data_size % TEST_WINDOW_MAX_SIZE != 0);
-    let test_window_count = max(test_window_count, 2); //at least 2 windows: for testing rereads and rws
-    let test_window_size = test_data_size / test_window_count;
-    let test_window_size = test_window_size - test_window_size % TEST_WINDOW_SIZE_GRANULARITY;
-    let test_data_size = test_window_size * test_window_count;
 
     let test_buffer_create_info = vk::BufferCreateInfoBuilder::new()
         .sharing_mode(vk::SharingMode::EXCLUSIVE)
         .usage(vk::BufferUsageFlags::STORAGE_BUFFER)
-        .size(test_data_size as u64);
+        .size(allocation_size as u64);
     let test_buffer = unsafe {device.create_buffer(&test_buffer_create_info, None)}.unwrap();
     let test_mem_reqs = unsafe {device.get_buffer_memory_requirements(test_buffer)};
+    allocation_size = test_mem_reqs.size as i64;
     let test_mem_index = (0..memory_props.memory_type_count)
         .find(|i| {
             //test buffer comptibility flags expressed as bitmask
             let suitable = (test_mem_reqs.memory_type_bits & (1 << i)) != 0;
             let memory_type = memory_props.memory_types[*i as usize];
             let memory_heap = memory_props.memory_heaps[memory_type.heap_index as usize];
-            suitable && memory_heap.size as i64 >= test_data_size && memory_type.property_flags.contains(
+            suitable && memory_heap.size as i64 >= allocation_size && memory_type.property_flags.contains(
                 vk::MemoryPropertyFlags::DEVICE_LOCAL)
         }).ok_or("DEVICE_LOCAL test memory type not available")?;
-    println!("Test memory size {:5.1}GB   type {:2}: {:?} {:?}", test_data_size as f32/GB, test_mem_index, memory_props.memory_types[test_mem_index as usize], memory_props.memory_heaps[memory_props.memory_types[test_mem_index as usize].heap_index as usize]);
 
-    let test_memory_allocate_info = vk::MemoryAllocateInfoBuilder::new()
-        .allocation_size(test_mem_reqs.size)
-        .memory_type_index(test_mem_index);
-    let test_memory = unsafe{device.allocate_memory(&test_memory_allocate_info, None)}.unwrap();
+    let test_memory;
+    loop
+    {
+        let min_wanted_allocation = TEST_DATA_KEEP_FREE;
+        assert!(allocation_size >= min_wanted_allocation, "can't allocate memory enough for testing");
+        let test_memory_allocate_info = vk::MemoryAllocateInfoBuilder::new()
+            .allocation_size(allocation_size as u64)
+            .memory_type_index(test_mem_index);
+        let allocated = unsafe{device.allocate_memory(&test_memory_allocate_info, None)};
+        if let Some(ok_memory) = allocated.value
+        {
+            test_memory = ok_memory;
+            break;
+        }
+        allocation_size -= min_wanted_allocation;
+    }
+
+    println!("Test memory size {:5.1}GB   type {:2}: {:?} {:?}", allocation_size as f32/GB, test_mem_index, memory_props.memory_types[test_mem_index as usize], memory_props.memory_heaps[memory_props.memory_types[test_mem_index as usize].heap_index as usize]);
+
+    let test_window_count = allocation_size / TEST_WINDOW_MAX_SIZE + i64::from(allocation_size % TEST_WINDOW_MAX_SIZE != 0);
+    let test_window_count = max(test_window_count, 2); //at least 2 windows: for testing rereads and rws
+    let test_window_size = allocation_size / test_window_count;
+    let test_window_size = test_window_size - test_window_size % TEST_WINDOW_SIZE_GRANULARITY;
+    let test_data_size = test_window_size * test_window_count;
+    
+    unsafe{device.destroy_buffer(test_buffer, None)}; //buffer was used for getting memory reuirements. After allocation size may be smaller
+    
+    let test_buffer = unsafe {device.create_buffer(&test_buffer_create_info.size(test_data_size as u64), None)}.unwrap();
     unsafe{device.bind_buffer_memory(test_buffer, test_memory, 0)}.unwrap();
 
     let desc_pool_sizes = &[vk::DescriptorPoolSizeBuilder::new()
