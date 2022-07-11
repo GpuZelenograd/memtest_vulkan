@@ -2,7 +2,7 @@ use mortal::Event;
 use mortal::terminal::Key;
 
 #[derive(Default)]
-pub struct DigitReader
+pub struct Reader
 {
     pub current_input: String,
     terminal: Option<mortal::Terminal>,
@@ -17,9 +17,9 @@ pub enum ReaderEvent
     Canceled
 }
 
-impl DigitReader
+impl Reader
 {
-    pub fn input_step(&mut self, prompt: &str, timeout: &std::time::Duration) -> Result<ReaderEvent, Box<dyn std::error::Error>>
+    pub fn input_digit_step(&mut self, prompt: &str, timeout: &std::time::Duration) -> Result<ReaderEvent, Box<dyn std::error::Error>>
     {
         let terminal;
         if self.terminal.is_none()
@@ -75,16 +75,33 @@ impl DigitReader
                     Ok(ReaderEvent::Edited)
                 }
             },
+            Some(Event::Key(Key::Backspace)) | Some(Event::Key(Key::Delete)) =>
+            {
+                self.handle_backspace()?;
+                Ok(ReaderEvent::Edited)
+            }
 
             Some(Event::Key(_)) => Ok(ReaderEvent::Edited),
             Some(Event::Signal(_)) => Ok(ReaderEvent::Canceled),
             _ => Ok(ReaderEvent::Timeout),
         }
-        
+    }
+    fn handle_backspace(&mut self) -> Result<(), Box<dyn std::error::Error>>
+    {
+        if !self.current_input.is_empty()
+        {
+            if let Some(terminal) = &mut self.terminal
+            {
+                terminal.move_left(1)?;
+                terminal.clear_to_line_end()?;
+            }
+            self.current_input.pop();
+        }
+        Ok(())
     }
 }
 
-impl Drop for DigitReader {
+impl Drop for Reader {
     fn drop(&mut self) {
         if let Some(terminal) = &mut self.terminal
         {

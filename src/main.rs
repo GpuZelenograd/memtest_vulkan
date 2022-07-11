@@ -624,9 +624,21 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             };
 
             let properties = instance.get_physical_device_properties2(physical_device, None).properties;
-            Some((physical_device, queue_family, properties))
+            let memory_props = instance.get_physical_device_memory_properties(physical_device);
+
+            let mut max_local_heap_size = 0i64;
+            for i in 0..memory_props.memory_heap_count as usize
+            {
+                if !memory_props.memory_heaps[i].flags.contains(vk::MemoryHeapFlags::DEVICE_LOCAL)
+                {
+                    continue;
+                }
+                max_local_heap_size = max(max_local_heap_size, memory_props.memory_heaps[i].size as i64);
+            }
+
+            Some((physical_device, queue_family, properties, max_local_heap_size))
         }).collect();
-    compute_capable_devices.sort_by_key(|(_, _, props)| match props.device_type {
+    compute_capable_devices.sort_by_key(|(_, _, props, _)| match props.device_type {
             vk::PhysicalDeviceType::DISCRETE_GPU => 0,
             vk::PhysicalDeviceType::INTEGRATED_GPU => 1,
             _ => 2,
@@ -634,12 +646,13 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     for (i, d) in compute_capable_devices.iter().enumerate()
     {
         let props = d.2;
-        println!("{}: DevId 0x{:04X} API version {}.{}.{}  {:?}", i+1,
+        println!("{}: DevId 0x{:04X} API v.{}.{}.{}  {}GB {}", i+1,
             props.device_id,
             vk::api_version_major(props.api_version),
             vk::api_version_minor(props.api_version),
             vk::api_version_patch(props.api_version),
-            unsafe { CStr::from_ptr(props.device_name.as_ptr()) },
+            (d.3 as f32/GB).ceil(),
+            unsafe { CStr::from_ptr(props.device_name.as_ptr()).to_str().unwrap() },
             );
     }
     
@@ -647,7 +660,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let prompt_start = time::Instant::now();
     let mut prompt_duration : Option<time::Duration> = Some(time::Duration::from_secs(10));
 
-    let mut digit_reader = input::DigitReader::default();
+    let mut input_reader = input::Reader::default();
     let no_timer_prompt = String::from("                                                   Enter index to test:");
     loop
     {
@@ -668,7 +681,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 prompt = &formatted_prompt;
             }
         }
-        match digit_reader.input_step(prompt, &time::Duration::from_millis(250))?
+        match input_reader.input_digit_step(prompt, &time::Duration::from_millis(250))?
         {
             input::ReaderEvent::Edited => prompt_duration = None,
             input::ReaderEvent::Canceled => {
@@ -679,9 +692,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             input::ReaderEvent::Completed =>
             {
                 println!("");
-                if !digit_reader.current_input.is_empty()
+                if !input_reader.current_input.is_empty()
                 {
-                    let mut parsed = digit_reader.current_input.parse::<usize>().unwrap();
+                    let mut parsed = input_reader.current_input.parse::<usize>().unwrap();
                     if parsed > 0
                     {
                         parsed -= 1;
@@ -693,15 +706,15 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             input::ReaderEvent::Timeout => {} //just redraw prompt
         }
     }
-    drop(digit_reader);
+    drop(input_reader);
 
     if let Some(selected_index) = device_test_index
     {
-        let (physical_device, queue_family, props) =
+        let (physical_device, queue_family, props, _max_local_heap_size) =
                 *(compute_capable_devices.get(selected_index).expect("No suitable physical device found"));
 
-        println!("Using physical device: {:?}", unsafe {
-            CStr::from_ptr(props.device_name.as_ptr())
+        println!("Using physical device: {}", unsafe {
+            CStr::from_ptr(props.device_name.as_ptr()).to_str().unwrap()
         });
 
         let queue_create_info = vec![vk::DeviceQueueCreateInfoBuilder::new()
