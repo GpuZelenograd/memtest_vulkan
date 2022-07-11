@@ -22,19 +22,24 @@ impl Reader {
         timeout: &std::time::Duration,
     ) -> Result<ReaderEvent, Box<dyn std::error::Error>> {
         let terminal;
-        if self.terminal.is_none() {
+        if self.prepare_state.is_none() {
             self.terminal = Some(mortal::Terminal::new()?);
             terminal = self.terminal.as_ref().unwrap();
             let mut signals = mortal::signal::SignalSet::new();
             signals.insert(mortal::signal::Signal::Break);
             signals.insert(mortal::signal::Signal::Interrupt);
             signals.insert(mortal::signal::Signal::Quit);
-            self.prepare_state = Some(terminal.prepare(mortal::terminal::PrepareConfig {
+            let tried_prepare = terminal.prepare(mortal::terminal::PrepareConfig {
                 block_signals: false,
                 enable_keypad: false,
                 report_signals: signals,
                 ..mortal::terminal::PrepareConfig::default()
-            })?);
+            });
+            match tried_prepare {
+                //terminal input not available, treate it as empty input
+                Err(_) => return Ok(ReaderEvent::Completed),
+                Ok(state) => self.prepare_state = Some(state),
+            }
         } else {
             terminal = self.terminal.as_ref().unwrap();
         }
@@ -90,9 +95,9 @@ impl Reader {
 impl Drop for Reader {
     fn drop(&mut self) {
         if let Some(terminal) = &mut self.terminal {
-            terminal
-                .restore(self.prepare_state.take().unwrap())
-                .unwrap();
+            if let Some(state) = self.prepare_state.take() {
+                terminal.restore(state).unwrap();
+            }
         }
     }
 }
