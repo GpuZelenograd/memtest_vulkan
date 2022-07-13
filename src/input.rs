@@ -73,31 +73,32 @@ impl Reader {
         let _ = terminal.set_fg(Some(match passed {
             true => Color::Green,
             false => Color::Red,
-            }));
+        }));
     }
-    
-    pub fn wait_any_key(&mut self) 
-    {
+
+    pub fn wait_any_key(&mut self) {
         if !self.try_prepare_terminal() {
             //terminal input not available, don't perform wait.
             return;
         }
         let terminal = self.terminal.as_ref().unwrap();
-        if terminal.write_str("  press any key to continue...\n").is_err()
+        if terminal
+            .write_str("  press any key to continue...")
+            .is_err()
         {
             return;
         }
         let _ignored = terminal.read_event(None);
+        let _ignored = terminal.write_str("\n");
     }
     fn try_prepare_terminal(&mut self) -> bool {
         if self.prepare_state.is_some() {
             return true;
         }
-        let tried_terminal = mortal::Terminal::new(); 
-        self.terminal = match tried_terminal
-        {
+        let tried_terminal = mortal::Terminal::new();
+        self.terminal = match tried_terminal {
             Ok(terminal) => Some(terminal),
-            _ => return false
+            _ => return false,
         };
         let terminal = self.terminal.as_ref().unwrap();
         let mut signals = mortal::signal::SignalSet::new();

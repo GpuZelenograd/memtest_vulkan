@@ -8,12 +8,13 @@ use erupt::{
 };
 use std::{
     ffi::{c_void, CStr},
-    fmt, mem,
+    fmt,
+    io::Write,
+    mem,
     sync::{
         atomic::{AtomicBool, Ordering::SeqCst},
         Arc,
     },
-    io::Write,
     time,
 };
 
@@ -188,6 +189,23 @@ impl IOBuf {
     }
 }
 
+trait MapErrStr {
+    type ValueType;
+    fn err_as_str(self) -> Result<Self::ValueType, Box<dyn std::error::Error>>;
+}
+
+impl<T> MapErrStr for erupt::utils::VulkanResult<T> {
+    type ValueType = T;
+    fn err_as_str(self) -> Result<Self::ValueType, Box<dyn std::error::Error>> {
+        let result = self.result();
+        result.map_err(|res| {
+            let msg =
+                res.to_string() + " while getting " + std::any::type_name::<Self::ValueType>();
+            msg.to_string().into()
+        })
+    }
+}
+
 unsafe extern "system" fn debug_callback(
     _message_severity: vk::DebugUtilsMessageSeverityFlagBitsEXT,
     _message_types: vk::DebugUtilsMessageTypeFlagsEXT,
@@ -249,7 +267,7 @@ fn test_device(
         .sharing_mode(vk::SharingMode::EXCLUSIVE)
         .usage(vk::BufferUsageFlags::STORAGE_BUFFER)
         .size(io_data_size);
-    let io_buffer = unsafe { device.create_buffer(&io_buffer_create_info, None) }.unwrap();
+    let io_buffer = unsafe { device.create_buffer(&io_buffer_create_info, None) }.err_as_str()?;
     let io_mem_reqs = unsafe { device.get_buffer_memory_requirements(io_buffer) };
     let io_mem_index = (0..memory_props.memory_type_count)
         .find(|i| {
@@ -277,22 +295,24 @@ fn test_device(
     let io_memory_allocate_info = vk::MemoryAllocateInfoBuilder::new()
         .allocation_size(io_mem_reqs.size)
         .memory_type_index(io_mem_index);
-    let io_memory = unsafe { device.allocate_memory(&io_memory_allocate_info, None) }.unwrap();
+    let io_memory =
+        unsafe { device.allocate_memory(&io_memory_allocate_info, None) }.err_as_str()?;
 
     let mapped: *mut IOBuf = unsafe {
         mem::transmute(
             device
                 .map_memory(io_memory, 0, vk::WHOLE_SIZE, vk::MemoryMapFlags::default())
-                .unwrap(),
+                .err_as_str()?,
         )
     };
-    unsafe { device.bind_buffer_memory(io_buffer, io_memory, 0) }.unwrap();
+    unsafe { device.bind_buffer_memory(io_buffer, io_memory, 0) }.err_as_str()?;
 
     let test_buffer_create_info = vk::BufferCreateInfoBuilder::new()
         .sharing_mode(vk::SharingMode::EXCLUSIVE)
         .usage(vk::BufferUsageFlags::STORAGE_BUFFER)
         .size(allocation_size as u64);
-    let test_buffer = unsafe { device.create_buffer(&test_buffer_create_info, None) }.unwrap();
+    let test_buffer =
+        unsafe { device.create_buffer(&test_buffer_create_info, None) }.err_as_str()?;
     let test_mem_reqs = unsafe { device.get_buffer_memory_requirements(test_buffer) };
     allocation_size = test_mem_reqs.size as i64;
     let test_mem_index = (0..memory_props.memory_type_count)
@@ -349,8 +369,8 @@ fn test_device(
 
     let test_buffer =
         unsafe { device.create_buffer(&test_buffer_create_info.size(test_data_size as u64), None) }
-            .unwrap();
-    unsafe { device.bind_buffer_memory(test_buffer, test_memory, 0) }.unwrap();
+            .err_as_str()?;
+    unsafe { device.bind_buffer_memory(test_buffer, test_memory, 0) }.err_as_str()?;
 
     let desc_pool_sizes = &[vk::DescriptorPoolSizeBuilder::new()
         .descriptor_count(2)
@@ -358,7 +378,7 @@ fn test_device(
     let desc_pool_info = vk::DescriptorPoolCreateInfoBuilder::new()
         .pool_sizes(desc_pool_sizes)
         .max_sets(1);
-    let desc_pool = unsafe { device.create_descriptor_pool(&desc_pool_info, None) }.unwrap();
+    let desc_pool = unsafe { device.create_descriptor_pool(&desc_pool_info, None) }.err_as_str()?;
 
     let desc_layout_bindings = &[
         vk::DescriptorSetLayoutBindingBuilder::new()
@@ -375,13 +395,13 @@ fn test_device(
     let desc_layout_info =
         vk::DescriptorSetLayoutCreateInfoBuilder::new().bindings(desc_layout_bindings);
     let desc_layout =
-        unsafe { device.create_descriptor_set_layout(&desc_layout_info, None) }.unwrap();
+        unsafe { device.create_descriptor_set_layout(&desc_layout_info, None) }.err_as_str()?;
 
     let desc_layouts = &[desc_layout];
     let desc_info = vk::DescriptorSetAllocateInfoBuilder::new()
         .descriptor_pool(desc_pool)
         .set_layouts(desc_layouts);
-    let desc_set = unsafe { device.allocate_descriptor_sets(&desc_info) }.unwrap()[0];
+    let desc_set = unsafe { device.allocate_descriptor_sets(&desc_info) }.err_as_str()?[0];
 
     unsafe {
         device.update_descriptor_sets(
@@ -401,11 +421,11 @@ fn test_device(
     let pipeline_layout_info =
         vk::PipelineLayoutCreateInfoBuilder::new().set_layouts(pipeline_layout_desc_layouts);
     let pipeline_layout =
-        unsafe { device.create_pipeline_layout(&pipeline_layout_info, None) }.unwrap();
+        unsafe { device.create_pipeline_layout(&pipeline_layout_info, None) }.err_as_str()?;
 
     let spv_code = Vec::from(READ_SHADER);
     let create_info = vk::ShaderModuleCreateInfoBuilder::new().code(&spv_code);
-    let shader_mod = unsafe { device.create_shader_module(&create_info, None) }.unwrap();
+    let shader_mod = unsafe { device.create_shader_module(&create_info, None) }.err_as_str()?;
 
     let pipeline_infos = [
         c_str!("read"),
@@ -424,61 +444,69 @@ fn test_device(
 
     let pipelines_r_w_emul =
         unsafe { device.create_compute_pipelines(Default::default(), &pipeline_infos, None) }
-            .unwrap();
+            .err_as_str()?;
 
     let cmd_pool_info = vk::CommandPoolCreateInfoBuilder::new()
         .queue_family_index(queue_family_index)
         .flags(vk::CommandPoolCreateFlags::RESET_COMMAND_BUFFER);
-    let cmd_pool = unsafe { device.create_command_pool(&cmd_pool_info, None) }.unwrap();
+    let cmd_pool = unsafe { device.create_command_pool(&cmd_pool_info, None) }.err_as_str()?;
 
     let cmd_buf_info = vk::CommandBufferAllocateInfoBuilder::new()
         .command_pool(cmd_pool)
         .command_buffer_count(1)
         .level(vk::CommandBufferLevel::PRIMARY);
-    let cmd_buf = unsafe { device.allocate_command_buffers(&cmd_buf_info) }.unwrap()[0];
+    let cmd_buf = unsafe { device.allocate_command_buffers(&cmd_buf_info) }.err_as_str()?[0];
 
     let test_element_count = (test_window_size / ELEMENT_SIZE) as u32;
 
     let fence_info = vk::FenceCreateInfoBuilder::new();
-    let fence = unsafe { device.create_fence(&fence_info, None) }.unwrap();
+    let fence = unsafe { device.create_fence(&fence_info, None) }.err_as_str()?;
 
     let cmd_bufs = &[cmd_buf];
     let submit_info = &[vk::SubmitInfoBuilder::new().command_buffers(cmd_bufs)];
-    let execute_wait_queue = |buf_offset: i64, pipeline: vk::Pipeline| unsafe {
-        device.update_descriptor_sets(
-            &[vk::WriteDescriptorSetBuilder::new()
-                .dst_set(desc_set)
-                .dst_binding(1)
-                .descriptor_type(vk::DescriptorType::STORAGE_BUFFER)
-                .buffer_info(&[vk::DescriptorBufferInfoBuilder::new()
-                    .buffer(test_buffer)
-                    .offset(buf_offset as u64)
-                    .range(test_window_size as u64)])],
-            &[],
-        );
-        device
-            .begin_command_buffer(cmd_buf, &vk::CommandBufferBeginInfo::default())
-            .unwrap();
-        device.cmd_bind_pipeline(cmd_buf, vk::PipelineBindPoint::COMPUTE, pipeline);
-        device.cmd_bind_descriptor_sets(
-            cmd_buf,
-            vk::PipelineBindPoint::COMPUTE,
-            pipeline_layout,
-            0,
-            &[desc_set],
-            &[],
-        );
-        device.cmd_dispatch(
-            cmd_buf,
-            test_element_count / WG_SIZE as u32 / VEC_SIZE as u32,
-            1,
-            1,
-        );
-        device.end_command_buffer(cmd_buf).unwrap();
-        device.queue_submit(queue, submit_info, fence).unwrap();
-        device.wait_for_fences(&[fence], true, u64::MAX).unwrap();
-        device.reset_fences(&[fence]).unwrap();
-    };
+    let execute_wait_queue =
+        |buf_offset: i64, pipeline: vk::Pipeline| -> Result<(), Box<dyn std::error::Error>> {
+            unsafe {
+                device.update_descriptor_sets(
+                    &[vk::WriteDescriptorSetBuilder::new()
+                        .dst_set(desc_set)
+                        .dst_binding(1)
+                        .descriptor_type(vk::DescriptorType::STORAGE_BUFFER)
+                        .buffer_info(&[vk::DescriptorBufferInfoBuilder::new()
+                            .buffer(test_buffer)
+                            .offset(buf_offset as u64)
+                            .range(test_window_size as u64)])],
+                    &[],
+                );
+                device
+                    .begin_command_buffer(cmd_buf, &vk::CommandBufferBeginInfo::default())
+                    .err_as_str()?;
+                device.cmd_bind_pipeline(cmd_buf, vk::PipelineBindPoint::COMPUTE, pipeline);
+                device.cmd_bind_descriptor_sets(
+                    cmd_buf,
+                    vk::PipelineBindPoint::COMPUTE,
+                    pipeline_layout,
+                    0,
+                    &[desc_set],
+                    &[],
+                );
+                device.cmd_dispatch(
+                    cmd_buf,
+                    test_element_count / WG_SIZE as u32 / VEC_SIZE as u32,
+                    1,
+                    1,
+                );
+                device.end_command_buffer(cmd_buf).err_as_str()?;
+                device
+                    .queue_submit(queue, submit_info, fence)
+                    .err_as_str()?;
+                device
+                    .wait_for_fences(&[fence], true, u64::MAX)
+                    .err_as_str()?;
+                device.reset_fences(&[fence]).err_as_str()?;
+                Ok(())
+            }
+        };
     let iter_count = 100000000; //by default exit after several days of testing
     let mut written_bytes = 0i64;
     let mut read_bytes = 0i64;
@@ -496,7 +524,7 @@ fn test_device(
             unsafe {
                 (*mapped).calc_param = buffer_in.calc_param + window_idx as u32 * 0x81 as u32;
             }
-            execute_wait_queue(test_offset, pipelines_r_w_emul[1]); //use 2 for error simulation
+            execute_wait_queue(test_offset, pipelines_r_w_emul[1])?; //use 2 for error simulation
             written_bytes += test_window_size;
         }
         buffer_in.set_calc_param_for_starting_window();
@@ -516,7 +544,7 @@ fn test_device(
                 );
             }
             let test_offset = test_window_size * window_idx;
-            execute_wait_queue(test_offset, pipelines_r_w_emul[0]);
+            execute_wait_queue(test_offset, pipelines_r_w_emul[0])?;
             read_bytes += test_window_size;
             {
                 let buffer_out: IOBuf;
@@ -572,7 +600,7 @@ fn test_device(
     }
     // Cleanup & Destruction
     unsafe {
-        device.device_wait_idle().unwrap();
+        device.device_wait_idle().err_as_str()?;
 
         device.destroy_buffer(test_buffer, None);
         device.free_memory(test_memory, None);
@@ -599,7 +627,8 @@ fn test_device(
 fn init_vk_and_check_no_errors(debug_mode: bool) -> Result<bool, Box<dyn std::error::Error>> {
     let entry = EntryLoader::new()?;
     if debug_mode {
-        println!("Debug mode enabled ('debug' found in executable), running on Vulkan {}.{}.{}",
+        println!(
+            "Debug mode enabled ('debug' found in executable), running on Vulkan {}.{}.{}",
             vk::api_version_major(entry.instance_version()),
             vk::api_version_minor(entry.instance_version()),
             vk::api_version_patch(entry.instance_version())
@@ -624,20 +653,20 @@ fn init_vk_and_check_no_errors(debug_mode: bool) -> Result<bool, Box<dyn std::er
     let mut messenger = Default::default();
     let instance = unsafe { InstanceLoader::new(&entry, &instance_create_info) }
         .map(|instance| {
+            let mut severity = ext_debug_utils::DebugUtilsMessageSeverityFlagsEXT::WARNING_EXT
+                | ext_debug_utils::DebugUtilsMessageSeverityFlagsEXT::ERROR_EXT;
+            if debug_mode {
+                severity |= ext_debug_utils::DebugUtilsMessageSeverityFlagsEXT::INFO_EXT;
+                //lists all extensions, very verbose
+                //severity |= ext_debug_utils::DebugUtilsMessageSeverityFlagsEXT::VERBOSE_EXT;
+            }
             let create_info = ext_debug_utils::DebugUtilsMessengerCreateInfoEXTBuilder::new()
-                .message_severity(
-                    ext_debug_utils::DebugUtilsMessageSeverityFlagsEXT::WARNING_EXT
-                        | ext_debug_utils::DebugUtilsMessageSeverityFlagsEXT::ERROR_EXT,
-                    //ext_debug_utils::DebugUtilsMessageSeverityFlagsEXT::VERBOSE_EXT
-                )
-                .message_type(
-                    ext_debug_utils::DebugUtilsMessageTypeFlagsEXT::GENERAL_EXT
-                        | ext_debug_utils::DebugUtilsMessageTypeFlagsEXT::VALIDATION_EXT
-                        | ext_debug_utils::DebugUtilsMessageTypeFlagsEXT::PERFORMANCE_EXT,
-                )
+                .message_severity(severity)
+                .message_type(ext_debug_utils::DebugUtilsMessageTypeFlagsEXT::all())
                 .pfn_user_callback(Some(debug_callback));
-            messenger =
-                unsafe { instance.create_debug_utils_messenger_ext(&create_info, None) }.unwrap();
+            messenger = unsafe { instance.create_debug_utils_messenger_ext(&create_info, None) }
+                .result()
+                .unwrap_or_default();
             device_layers.push(LAYER_KHRONOS_VALIDATION.as_ptr());
             instance
         })
@@ -651,7 +680,7 @@ fn init_vk_and_check_no_errors(debug_mode: bool) -> Result<bool, Box<dyn std::er
         })?;
 
     let mut compute_capable_devices: Vec<_> = unsafe { instance.enumerate_physical_devices(None) }
-        .unwrap()
+        .err_as_str()?
         .into_iter()
         .filter_map(|physical_device| unsafe {
             let queue_family = match instance
@@ -711,12 +740,15 @@ fn init_vk_and_check_no_errors(debug_mode: bool) -> Result<bool, Box<dyn std::er
         let props = d.2;
         let pci_props = d.4;
         let api_info = if debug_mode {
-            std::format!("API v.{}.{}.{}",
+            std::format!(
+                "API v.{}.{}.{}",
                 vk::api_version_major(props.api_version),
                 vk::api_version_minor(props.api_version),
                 vk::api_version_patch(props.api_version),
             )
-        } else { String::new() };
+        } else {
+            String::new()
+        };
         numbered_devices.push(std::format!(
             "{}: Bus=0x{:02X}:{:02X} DevId=0x{:04X} {api_info}  {}GB {}",
             i + 1,
@@ -724,7 +756,11 @@ fn init_vk_and_check_no_errors(debug_mode: bool) -> Result<bool, Box<dyn std::er
             pci_props.pci_device,
             props.device_id,
             (d.3 as f32 / GB).ceil(),
-            unsafe { CStr::from_ptr(props.device_name.as_ptr()).to_str().unwrap() },
+            unsafe {
+                CStr::from_ptr(props.device_name.as_ptr())
+                    .to_str()
+                    .unwrap_or("Invalid device_name")
+            },
         ));
     }
     for desc in &numbered_devices {
@@ -771,10 +807,10 @@ fn init_vk_and_check_no_errors(debug_mode: bool) -> Result<bool, Box<dyn std::er
                                 parsed -= 1;
                             }
                             device_test_index = Some(parsed);
-                        },
+                        }
                         Err(_) => {
                             input_reader.current_input.clear();
-                            continue
+                            continue;
                         }
                     }
                 }
@@ -788,10 +824,9 @@ fn init_vk_and_check_no_errors(debug_mode: bool) -> Result<bool, Box<dyn std::er
 
     let no_errors;
     if let Some(selected_index) = device_test_index {
-        let (physical_device, queue_family, _, _, _) =
-            *(compute_capable_devices
-                .get(selected_index)
-                .ok_or("No device at given index")?);
+        let (physical_device, queue_family, _, _, _) = *(compute_capable_devices
+            .get(selected_index)
+            .ok_or("No device at given index")?);
 
         println!("Testing {}", numbered_devices[selected_index]);
 
@@ -839,18 +874,20 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let _ = std::io::stdout().flush();
     let mut color_setter = input::Reader::default();
     color_setter.set_pass_fail_accent_color(true);
-    println!("memtest_vulkan v{} by GpuZelenograd", env!("CARGO_PKG_VERSION"));
+    println!(
+        "memtest_vulkan v{} by GpuZelenograd",
+        env!("CARGO_PKG_VERSION")
+    );
     drop(color_setter);
     let result = init_vk_and_check_no_errors(debug_mode);
     let mut key_reader = input::Reader::default();
-    if result.is_ok() {
-        key_reader.set_pass_fail_accent_color(*result.as_ref().unwrap());
+    if let Ok(passed) = result {
+        key_reader.set_pass_fail_accent_color(passed);
     }
-    match result
-    {
+    match result {
         Ok(false) => println!("memtest_vulkan: memory/GPU errors found, testing finished."),
         Ok(true) => println!("memtest_vulkan: no any errors found, testing finished."),
-        Err(e) => println!("memtest_vulkan: testing not done: {}", e)
+        Err(e) => println!("memtest_vulkan: testing not done: {}", e),
     }
     key_reader.wait_any_key();
     Ok(())
