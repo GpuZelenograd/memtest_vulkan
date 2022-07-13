@@ -21,28 +21,11 @@ impl Reader {
         prompt: &str,
         timeout: &std::time::Duration,
     ) -> Result<ReaderEvent, Box<dyn std::error::Error>> {
-        let terminal;
-        if self.prepare_state.is_none() {
-            self.terminal = Some(mortal::Terminal::new()?);
-            terminal = self.terminal.as_ref().unwrap();
-            let mut signals = mortal::signal::SignalSet::new();
-            signals.insert(mortal::signal::Signal::Break);
-            signals.insert(mortal::signal::Signal::Interrupt);
-            signals.insert(mortal::signal::Signal::Quit);
-            let tried_prepare = terminal.prepare(mortal::terminal::PrepareConfig {
-                block_signals: false,
-                enable_keypad: false,
-                report_signals: signals,
-                ..mortal::terminal::PrepareConfig::default()
-            });
-            match tried_prepare {
-                //terminal input not available, treate it as empty input
-                Err(_) => return Ok(ReaderEvent::Completed),
-                Ok(state) => self.prepare_state = Some(state),
-            }
-        } else {
-            terminal = self.terminal.as_ref().unwrap();
+        if !self.try_prepare_terminal() {
+            //terminal input not available, treate it as empty input
+            return Ok(ReaderEvent::Completed);
         }
+        let terminal = self.terminal.as_ref().unwrap();
         terminal.move_to_first_column()?;
         terminal.clear_to_line_end()?;
         terminal.write_str(prompt)?;
@@ -80,6 +63,60 @@ impl Reader {
             _ => Ok(ReaderEvent::Timeout),
         }
     }
+    pub fn set_pass_fail_accent_color(&mut self, passed: bool) {
+        use mortal::terminal::Color;
+        if !self.try_prepare_terminal() {
+            //terminal input not available, don't perform wait.
+            return;
+        }
+        let terminal = self.terminal.as_ref().unwrap();
+        let _ = terminal.set_fg(Some(match passed {
+            true => Color::Green,
+            false => Color::Red,
+            }));
+    }
+    
+    pub fn wait_any_key(&mut self) 
+    {
+        if !self.try_prepare_terminal() {
+            //terminal input not available, don't perform wait.
+            return;
+        }
+        let terminal = self.terminal.as_ref().unwrap();
+        if terminal.write_str("  press any key to continue...\n").is_err()
+        {
+            return;
+        }
+        let _ignored = terminal.read_event(None);
+    }
+    fn try_prepare_terminal(&mut self) -> bool {
+        if self.prepare_state.is_some() {
+            return true;
+        }
+        let tried_terminal = mortal::Terminal::new(); 
+        self.terminal = match tried_terminal
+        {
+            Ok(terminal) => Some(terminal),
+            _ => return false
+        };
+        let terminal = self.terminal.as_ref().unwrap();
+        let mut signals = mortal::signal::SignalSet::new();
+        signals.insert(mortal::signal::Signal::Break);
+        signals.insert(mortal::signal::Signal::Interrupt);
+        signals.insert(mortal::signal::Signal::Quit);
+        let tried_prepare = terminal.prepare(mortal::terminal::PrepareConfig {
+            block_signals: false,
+            enable_keypad: false,
+            report_signals: signals,
+            ..mortal::terminal::PrepareConfig::default()
+        });
+        match tried_prepare {
+            //terminal input not available, treate it as empty input
+            Err(_) => return false,
+            Ok(state) => self.prepare_state = Some(state),
+        }
+        true
+    }
     fn handle_backspace(&mut self) -> Result<(), Box<dyn std::error::Error>> {
         if !self.current_input.is_empty() {
             if let Some(terminal) = &mut self.terminal {
@@ -96,7 +133,8 @@ impl Drop for Reader {
     fn drop(&mut self) {
         if let Some(terminal) = &mut self.terminal {
             if let Some(state) = self.prepare_state.take() {
-                terminal.restore(state).unwrap();
+                let _ = terminal.set_fg(None);
+                let _ = terminal.restore(state);
             }
         }
     }

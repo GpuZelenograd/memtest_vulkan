@@ -211,7 +211,7 @@ dependencies = [
 
 [[package]]
 name = "memtest_vulkan"
-version = "0.0.1"
+version = "0.0.3"
 dependencies = [
  "byte-strings",
  "ctrlc",

@@ -1,8 +1,10 @@
 #!/usr/bin/env -Scargo run --release --manifest-path
+#cargo fmt
+#cargo build --release --target x86_64-pc-windows-gnu
 [package]
 edition = '2021'
 name = 'memtest_vulkan'
-version = '0.0.1'
+version = '0.0.3'
 
 [dependencies]
 byte-strings = '0.2.2'

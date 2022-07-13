@@ -13,6 +13,7 @@ use std::{
         atomic::{AtomicBool, Ordering::SeqCst},
         Arc,
     },
+    io::Write,
     time,
 };
 
@@ -206,7 +207,8 @@ fn test_device(
     physical_device: vk::PhysicalDevice,
     queue_family_index: u32,
     device_create_info: vk::DeviceCreateInfo,
-) -> Result<(), Box<dyn std::error::Error>> {
+    debug_mode: bool,
+) -> Result<bool, Box<dyn std::error::Error>> {
     let device = unsafe { DeviceLoader::new(&instance, physical_device, &device_create_info) }?;
     let queue = unsafe { device.get_device_queue(queue_family_index, 0) };
 
@@ -262,13 +264,15 @@ fn test_device(
                 )
         })
         .ok_or("DEVICE_LOCAL | HOST_COHERENT memory type not available")?;
-    println!(
-        "IO memory                  type {}: {:?} heap {:?}",
-        io_mem_index,
-        memory_props.memory_types[io_mem_index as usize],
-        memory_props.memory_heaps
-            [memory_props.memory_types[io_mem_index as usize].heap_index as usize]
-    );
+    if debug_mode {
+        println!(
+            "IO memory                  type {}: {:?} heap {:?}",
+            io_mem_index,
+            memory_props.memory_types[io_mem_index as usize],
+            memory_props.memory_heaps
+                [memory_props.memory_types[io_mem_index as usize].heap_index as usize]
+        );
+    }
 
     let io_memory_allocate_info = vk::MemoryAllocateInfoBuilder::new()
         .allocation_size(io_mem_reqs.size)
@@ -323,14 +327,16 @@ fn test_device(
         allocation_size -= min_wanted_allocation;
     }
 
-    println!(
-        "Test memory size {:5.1}GB   type {:2}: {:?} {:?}",
-        allocation_size as f32 / GB,
-        test_mem_index,
-        memory_props.memory_types[test_mem_index as usize],
-        memory_props.memory_heaps
-            [memory_props.memory_types[test_mem_index as usize].heap_index as usize]
-    );
+    if debug_mode {
+        println!(
+            "Test memory size {:5.1}GB   type {:2}: {:?} {:?}",
+            allocation_size as f32 / GB,
+            test_mem_index,
+            memory_props.memory_types[test_mem_index as usize],
+            memory_props.memory_heaps
+                [memory_props.memory_types[test_mem_index as usize].heap_index as usize]
+        );
+    }
 
     let test_window_count = allocation_size / TEST_WINDOW_MAX_SIZE
         + i64::from(allocation_size % TEST_WINDOW_MAX_SIZE != 0);
@@ -480,6 +486,7 @@ fn test_device(
     let mut start = time::Instant::now();
     let stop_requested = Arc::new(AtomicBool::new(false));
     let mut buffer_in = IOBuf::default();
+    let mut no_errors = true;
     for iteration in 1..=iter_count {
         buffer_in.prepare_next_iter_write();
         unsafe { std::ptr::write(mapped, buffer_in) }
@@ -517,6 +524,7 @@ fn test_device(
                     buffer_out = std::ptr::read(mapped);
                 }
                 if let Some(error) = buffer_out.get_error_addresses(test_offset) {
+                    no_errors = false;
                     println!("{:?}", buffer_out);
                     println!(
                         "Error found. Mode {}, addresses: {:?}",
@@ -585,18 +593,19 @@ fn test_device(
         device.destroy_device(None);
     }
 
-    Ok(())
+    Ok(no_errors)
 }
 
-fn main() -> Result<(), Box<dyn std::error::Error>> {
+fn init_vk_and_check_no_errors(debug_mode: bool) -> Result<bool, Box<dyn std::error::Error>> {
     let entry = EntryLoader::new()?;
-    println!("https://github.com/galkinvv/memtest_vulkan by GpuZelenograd");
-    println!(
-        "Runing on Vulkan {}.{}.{} Press Ctrl+C to stop",
-        vk::api_version_major(entry.instance_version()),
-        vk::api_version_minor(entry.instance_version()),
-        vk::api_version_patch(entry.instance_version())
-    );
+    if debug_mode {
+        println!("Debug mode enabled ('debug' found in executable), running on Vulkan {}.{}.{}",
+            vk::api_version_major(entry.instance_version()),
+            vk::api_version_minor(entry.instance_version()),
+            vk::api_version_patch(entry.instance_version())
+        );
+    }
+    println!("To finish testing use Ctrl+C");
     println!();
 
     let mut instance_extensions = Vec::new();
@@ -697,21 +706,29 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             _ => (2, negative_bus_for_reverse_ordering),
         }
     });
+    let mut numbered_devices = Vec::new();
     for (i, d) in compute_capable_devices.iter().enumerate() {
         let props = d.2;
         let pci_props = d.4;
-        println!(
-            "{}: Bus=0x{:02X}:{:02X} DevId=0x{:04X} API v.{}.{}.{}  {}GB {}",
+        let api_info = if debug_mode {
+            std::format!("API v.{}.{}.{}",
+                vk::api_version_major(props.api_version),
+                vk::api_version_minor(props.api_version),
+                vk::api_version_patch(props.api_version),
+            )
+        } else { String::new() };
+        numbered_devices.push(std::format!(
+            "{}: Bus=0x{:02X}:{:02X} DevId=0x{:04X} {api_info}  {}GB {}",
             i + 1,
             pci_props.pci_bus,
             pci_props.pci_device,
             props.device_id,
-            vk::api_version_major(props.api_version),
-            vk::api_version_minor(props.api_version),
-            vk::api_version_patch(props.api_version),
             (d.3 as f32 / GB).ceil(),
             unsafe { CStr::from_ptr(props.device_name.as_ptr()).to_str().unwrap() },
-        );
+        ));
+    }
+    for desc in &numbered_devices {
+        println!("{desc}");
     }
 
     let mut device_test_index = Some(0usize);
@@ -746,14 +763,22 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 break;
             }
             input::ReaderEvent::Completed => {
-                println!("");
                 if !input_reader.current_input.is_empty() {
-                    let mut parsed = input_reader.current_input.parse::<usize>().unwrap();
-                    if parsed > 0 {
-                        parsed -= 1;
+                    match input_reader.current_input.parse::<usize>() {
+                        Ok(parsed_idx) => {
+                            let mut parsed = parsed_idx;
+                            if parsed > 0 {
+                                parsed -= 1;
+                            }
+                            device_test_index = Some(parsed);
+                        },
+                        Err(_) => {
+                            input_reader.current_input.clear();
+                            continue
+                        }
                     }
-                    device_test_index = Some(parsed);
                 }
+                println!("");
                 break;
             }
             input::ReaderEvent::Timeout => {} //just redraw prompt
@@ -761,15 +786,14 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     }
     drop(input_reader);
 
+    let no_errors;
     if let Some(selected_index) = device_test_index {
-        let (physical_device, queue_family, props, _max_local_heap_size, _pci_props_structure) =
+        let (physical_device, queue_family, _, _, _) =
             *(compute_capable_devices
                 .get(selected_index)
-                .expect("No suitable physical device found"));
+                .ok_or("No device at given index")?);
 
-        println!("Using physical device: {}", unsafe {
-            CStr::from_ptr(props.device_name.as_ptr()).to_str().unwrap()
-        });
+        println!("Testing {}", numbered_devices[selected_index]);
 
         let queue_create_info = vec![vk::DeviceQueueCreateInfoBuilder::new()
             .queue_family_index(queue_family)
@@ -779,14 +803,15 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             .queue_create_infos(&queue_create_info)
             .enabled_layer_names(&device_layers);
 
-        test_device(
+        no_errors = test_device(
             &instance,
             physical_device,
             queue_family,
             *device_create_info,
+            debug_mode,
         )?;
     } else {
-        println!("Test cancelled, no device selected");
+        return Err("Test cancelled, no device selected".into());
     }
 
     unsafe {
@@ -795,7 +820,38 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         }
         instance.destroy_instance(None);
     }
+    Ok(no_errors)
+}
 
-    println!("Exited cleanly");
+fn main() -> Result<(), Box<dyn std::error::Error>> {
+    let debug_mode = match std::env::args_os().next() {
+        Some(argv0) => match std::path::PathBuf::from(argv0)
+            .file_stem()
+            .map(std::ffi::OsStr::to_str)
+            .flatten()
+        {
+            Some(file_stem) => file_stem.to_ascii_lowercase().contains("debug"),
+            _ => false,
+        },
+        _ => false,
+    };
+    print!("https://github.com/GpuZelenograd/");
+    let _ = std::io::stdout().flush();
+    let mut color_setter = input::Reader::default();
+    color_setter.set_pass_fail_accent_color(true);
+    println!("memtest_vulkan v{} by GpuZelenograd", env!("CARGO_PKG_VERSION"));
+    drop(color_setter);
+    let result = init_vk_and_check_no_errors(debug_mode);
+    let mut key_reader = input::Reader::default();
+    if result.is_ok() {
+        key_reader.set_pass_fail_accent_color(*result.as_ref().unwrap());
+    }
+    match result
+    {
+        Ok(false) => println!("memtest_vulkan: memory/GPU errors found, testing finished."),
+        Ok(true) => println!("memtest_vulkan: no any errors found, testing finished."),
+        Err(e) => println!("memtest_vulkan: testing not done: {}", e)
+    }
+    key_reader.wait_any_key();
     Ok(())
 }
