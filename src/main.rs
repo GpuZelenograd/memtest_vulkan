@@ -242,7 +242,21 @@ fn test_device(
     .memory_properties;
 
     let mut allocation_size = 0i64;
+    if debug_mode {
+        for i in 0..memory_props.memory_type_count as usize {
+            println!("memory type flags {:?} heap {}", memory_props.memory_types[i].property_flags, memory_props.memory_types[i].heap_index);
+        }
+    }
     for i in 0..memory_props.memory_heap_count as usize {
+        if debug_mode
+        {
+            println!("heap size {:4.1}GB budget {:4.1}GB usage {:4.1}GB flags={:#?}",
+                memory_props.memory_heaps[i].size as f32/GB,
+                budget_structure.heap_budget[i] as f32/GB,
+                budget_structure.heap_usage[i] as f32/GB,
+                memory_props.memory_heaps[i].flags,
+                )
+        }
         if !memory_props.memory_heaps[i]
             .flags
             .contains(vk::MemoryHeapFlags::DEVICE_LOCAL)
@@ -330,12 +344,13 @@ fn test_device(
         .ok_or("DEVICE_LOCAL test memory type not available")?;
 
     let test_memory;
+    let mut warn_on_budget_alloc_fail = true;
     loop {
         let min_wanted_allocation = TEST_DATA_KEEP_FREE;
-        assert!(
-            allocation_size >= min_wanted_allocation,
-            "can't allocate memory enough for testing"
-        );
+        if allocation_size < min_wanted_allocation {
+            return Err("can't allocate memory enough for testing".into());
+        }
+
         let test_memory_allocate_info = vk::MemoryAllocateInfoBuilder::new()
             .allocation_size(allocation_size as u64)
             .memory_type_index(test_mem_index);
@@ -343,6 +358,10 @@ fn test_device(
         if let Some(ok_memory) = allocated.value {
             test_memory = ok_memory;
             break;
+        }
+        if warn_on_budget_alloc_fail {
+            warn_on_budget_alloc_fail = false;
+            println!("Failed allocating {:5.1}GB, tryning to use smaller size. More system memory can help.", allocation_size as f32 / GB);
         }
         allocation_size -= min_wanted_allocation;
     }

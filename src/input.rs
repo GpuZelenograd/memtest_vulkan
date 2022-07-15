@@ -40,6 +40,7 @@ impl Reader {
             Some(Event::Key(Key::Ctrl('c'))) => Ok(ReaderEvent::Canceled),
             Some(Event::Key(Key::Ctrl('z'))) => Ok(ReaderEvent::Canceled),
             Some(Event::Key(Key::Ctrl('x'))) => Ok(ReaderEvent::Canceled),
+            Some(Event::Key(Key::Ctrl('d'))) => Ok(ReaderEvent::Canceled),
 
             Some(Event::Key(Key::Char(c))) => {
                 if c.is_ascii_control() {
@@ -82,13 +83,28 @@ impl Reader {
             return;
         }
         let terminal = self.terminal.as_ref().unwrap();
+        loop {
+            match terminal.read_event(Some(std::time::Duration::ZERO)) {
+                Ok(None) => break,
+                Err(_) => return,
+                _ => continue
+            }
+        }
         if terminal
             .write_str("  press any key to continue...")
             .is_err()
         {
             return;
         }
-        let _ignored = terminal.read_event(None);
+        loop
+        {
+            match terminal.read_event(None) {
+                Err(_) => return,
+                Ok(Some(Event::NoEvent)) => continue,
+                _user_event => break
+            };
+        }
+        let _ignored = terminal.set_fg(None);
         let _ignored = terminal.write_str("\n");
     }
     fn try_prepare_terminal(&mut self) -> bool {
