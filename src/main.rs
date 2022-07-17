@@ -57,9 +57,9 @@ fn test_value_by_index(i:u32)->vec4<u32>
 
 @compute @workgroup_size(64, 1, 1)
 fn read(@builtin(global_invocation_id) global_invocation_id: vec3<u32>) {
-    let TEST_WINDOW_READ_ADDR_ROTATION_GRANULARITY: u32 = 0x20000u;//don't inner-multiply by window size
+    let TEST_WINDOW_READ_ADDR_ROTATION_GRANULARITY: u32 = 0x2000u;//don't inner-multiply by window size
     let addr_mod = global_invocation_id[0] % TEST_WINDOW_READ_ADDR_ROTATION_GRANULARITY;
-    let new_mod = (global_invocation_id[0] + io.calc_param) % TEST_WINDOW_READ_ADDR_ROTATION_GRANULARITY;
+    let new_mod = (11 * global_invocation_id[0] + io.calc_param +  7 * (global_invocation_id[0] / TEST_WINDOW_READ_ADDR_ROTATION_GRANULARITY)) % TEST_WINDOW_READ_ADDR_ROTATION_GRANULARITY;
     let effective_addr = global_invocation_id[0] - addr_mod + new_mod; //make read order a bit rotated, not strictly sequential
     let actual_value : vec4<u32> = test[effective_addr];
     let expected_value : vec4<u32> = test_value_by_index(effective_addr);
