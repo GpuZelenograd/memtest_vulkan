@@ -26,7 +26,7 @@ struct IOBuf
 {
     err_bit1_idx: array<u32, 32>,
     err_bitcount: array<u32, 32>,
-    actual_bitcount: array<u32, 32>,
+    mem_bitcount: array<u32, 32>,
     actual_ff: u32,
     actual_max: u32,
     actual_min: u32,
@@ -35,15 +35,24 @@ struct IOBuf
     done_iter_or_err: u32,
     iter: u32,
     calc_param: u32,
+    first_elem: vec4<u32>
 }
 
 @group(0) @binding(0) var<storage, read_write> io: IOBuf;
 @group(0) @binding(1) var<storage, read_write> test: array<vec4<u32>>;
 
+fn addr_value_by_index(i:u32)->vec4<u32>
+{
+    let effective_index_of_u32 = i * 4u + io.calc_param;
+    return vec4<u32>(effective_index_of_u32 + 1u, effective_index_of_u32 + 2u, effective_index_of_u32 + 3u, effective_index_of_u32 + 4u);
+}
+
 fn test_value_by_index(i:u32)->vec4<u32>
 {
-    let effective_index_of_u32 = (i + io.calc_param) * 4u;
-    return vec4<u32>(effective_index_of_u32, effective_index_of_u32 + 1u, effective_index_of_u32 + 2u, effective_index_of_u32 + 3u);
+    let addrs : vec4<u32> = addr_value_by_index(i);
+    let shifts : vec4<u32> = addrs % 31u;
+    let rotated : vec4<u32> = (addrs << shifts) | (addrs >> (32u - shifts));
+    return rotated;
 }
 
 @compute @workgroup_size(64, 1, 1)
@@ -76,7 +85,7 @@ fn read(@builtin(global_invocation_id) global_invocation_id: vec3<u32>) {
             }
             else
             {
-                atomicAdd(&io.actual_bitcount[actual_bits], 1u);
+                atomicAdd(&io.mem_bitcount[actual_bits], 1u);
                 atomicMax(&io.actual_max, actual_u32);
                 atomicMin(&io.actual_min, actual_u32);
             }
@@ -85,19 +94,28 @@ fn read(@builtin(global_invocation_id) global_invocation_id: vec3<u32>) {
     //assign done_iter_or_err only on specific index (performance reasons)
     if global_invocation_id[0] == 0 {
         atomicMax(&io.done_iter_or_err, io.iter);
+    } else if global_invocation_id[0] == 1 {
+        io.first_elem = expected_value;
     }
 }
 
 @compute @workgroup_size(64, 1, 1)
 fn write(@builtin(global_invocation_id) global_invocation_id: vec3<u32>) {
-    test[global_invocation_id[0]] = test_value_by_index(global_invocation_id[0]);
+    //make global_invocation_id processing specific memory addr different on writing compared to reading
+    let TEST_WINDOW_SIZE_GRANULARITY: u32 = 64u * 0x20000u;//don't inner-multiply by window size
+    let proccessed_mod = global_invocation_id[0] % TEST_WINDOW_SIZE_GRANULARITY;
+    let proccessed_idx = global_invocation_id[0] + TEST_WINDOW_SIZE_GRANULARITY - 2 * proccessed_mod - 1;
+    test[proccessed_idx] = test_value_by_index(proccessed_idx);
 }
 
 @compute @workgroup_size(64, 1, 1)
 fn emulate_write_bugs(@builtin(global_invocation_id) global_invocation_id: vec3<u32>) {
-    test[global_invocation_id[0]] = test_value_by_index(global_invocation_id[0]);
-    if global_invocation_id[0] == 0xADBA {
-        test[global_invocation_id[0]][1] ^= 0x400000u;//error simulation for test
+    let TEST_WINDOW_SIZE_GRANULARITY: u32 = 64u * 0x20000u;//don't inner-multiply by window size
+    let proccessed_mod = global_invocation_id[0] % TEST_WINDOW_SIZE_GRANULARITY;
+    let proccessed_idx = global_invocation_id[0] + TEST_WINDOW_SIZE_GRANULARITY - 2 * proccessed_mod - 1;
+    test[proccessed_idx] = test_value_by_index(proccessed_idx);
+    if proccessed_idx == 0xADBA {
+        test[proccessed_idx][1] ^= 0x400000u;//error simulation for test
     }
 }
 "#
@@ -107,8 +125,8 @@ const WG_SIZE: i64 = 64;
 const VEC_SIZE: usize = 4; //vector processed by single workgroup item
 const ELEMENT_SIZE: i64 = std::mem::size_of::<u32>() as i64;
 const ELEMENT_BIT_SIZE: usize = (ELEMENT_SIZE * 8) as usize;
-const TEST_WINDOW_SIZE_GRANULARITY: i64 = WG_SIZE * ELEMENT_SIZE;
-const TEST_WINDOW_MAX_SIZE: i64 = 4 * 1024 * 1024 * 1024 - WG_SIZE * ELEMENT_SIZE;
+const TEST_WINDOW_SIZE_GRANULARITY: i64 = VEC_SIZE as i64 * WG_SIZE * ELEMENT_SIZE * 0x20000 as i64;
+const TEST_WINDOW_MAX_SIZE: i64 = 4 * 1024 * 1024 * 1024 - TEST_WINDOW_SIZE_GRANULARITY;
 const TEST_DATA_KEEP_FREE: i64 = 400 * 1024 * 1024;
 
 #[derive(Default)]
@@ -120,13 +138,20 @@ impl fmt::Debug for U64HexDebug {
     }
 }
 
-#[derive(Copy, Clone, Default)]
-struct MostlyZeroArr([u32; ELEMENT_BIT_SIZE]);
+#[derive(Copy, Clone)]
+struct MostlyZeroArr<const LEN: usize>([u32; LEN]);
 
-impl fmt::Debug for MostlyZeroArr {
+impl<const LEN: usize> fmt::Display for MostlyZeroArr<LEN> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        if LEN < 8
+        {
+            for i in 0..LEN {
+                write!(f, "0x{:08X} ", self.0[i])?;
+            }
+            return Ok(())
+        }
         let mut zero_count = 0;
-        for i in 0..ELEMENT_BIT_SIZE {
+        for i in 0..LEN {
             let vali = self.0[i];
             if vali != 0 {
                 write!(f, "[{}]={},", i, vali)?;
@@ -138,12 +163,18 @@ impl fmt::Debug for MostlyZeroArr {
     }
 }
 
-#[derive(Copy, Clone, Debug, Default)]
+impl<const LEN: usize> std::default::Default for MostlyZeroArr<LEN> {
+    fn default() -> Self {
+        Self([0; LEN])
+    }
+}
+
+#[derive(Copy, Clone, Default)]
 #[repr(C)]
 struct IOBuf {
-    err_bit1_idx: MostlyZeroArr,
-    err_bitcount: MostlyZeroArr,
-    actual_bitcount: MostlyZeroArr,
+    err_bit1_idx: MostlyZeroArr<ELEMENT_BIT_SIZE>,
+    err_bitcount: MostlyZeroArr<ELEMENT_BIT_SIZE>,
+    mem_bitcount: MostlyZeroArr<ELEMENT_BIT_SIZE>,
     actual_ff: u32,
     actual_max: u32,
     actual_min: u32,
@@ -152,7 +183,21 @@ struct IOBuf {
     done_iter_or_err: u32,
     iter: u32,
     calc_param: u32,
+    first_elem: MostlyZeroArr<VEC_SIZE>,
 }
+
+impl fmt::Display for IOBuf {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        writeln!(f, "err_bit1_idx: {} ", self.err_bit1_idx)?;
+        writeln!(f, "err_bitcount: {} ", self.err_bitcount)?;
+        writeln!(f, "mem_bitcount: {} ", self.mem_bitcount)?;
+        writeln!(f, "actual_ff: {} actual_max: 0x{:08X} actual_min: 0x{:08X} done_iter_or_err:{} iter:{} calc_param 0x{:08X} idxs:{}-{}",
+                self.actual_ff, self.actual_max, self.actual_min, self.done_iter_or_err, self.iter, self.calc_param, self.idx_min, self.idx_max)?;
+        writeln!(f, "first_elem: {} ", self.first_elem)?;
+        Ok(())
+    }
+}
+
 
 impl IOBuf {
     fn prepare_next_iter_write(&mut self) {
@@ -186,6 +231,18 @@ impl IOBuf {
                 U64HexDebug(buf_offset + (self.idx_max + 1) as i64 * ELEMENT_SIZE - 1),
             ))
         }
+    }
+    fn check_vec_first(&self) -> Result<(), Box<dyn std::error::Error>>
+    {
+        const TEST_IDX: u32 = 1;
+        let addr : u32 = TEST_IDX * VEC_SIZE as u32 + self.calc_param + 1u32;
+        let shift = addr % 31u32;
+        let rotated = addr << shift | addr >> (32 - shift);
+        if rotated != self.first_elem.0[0] {
+            println!("{} 0x{:08X}", self, rotated);
+            return Err("unexpected calculated value, maybe shader execution is broken".into())
+        }
+        Ok(())
     }
 }
 
@@ -547,6 +604,7 @@ fn test_device(
             written_bytes += test_window_size;
         }
         buffer_in.set_calc_param_for_starting_window();
+        let mut last_buffer_out: IOBuf = IOBuf::default();
         for window_idx in 0..test_window_count {
             let reread_mode_for_this_win = reread_mode_for_win_0 && window_idx == 0;
             buffer_in.calc_param += window_idx as u32 * 0x81 as u32;
@@ -566,13 +624,12 @@ fn test_device(
             execute_wait_queue(test_offset, pipelines_r_w_emul[0])?;
             read_bytes += test_window_size;
             {
-                let buffer_out: IOBuf;
                 unsafe {
-                    buffer_out = std::ptr::read(mapped);
+                    last_buffer_out = std::ptr::read(mapped);
                 }
-                if let Some(error) = buffer_out.get_error_addresses(test_offset) {
+                if let Some(error) = last_buffer_out.get_error_addresses(test_offset) {
                     no_errors = false;
-                    println!("{:?}", buffer_out);
+                    println!("{}", last_buffer_out);
                     println!(
                         "Error found. Mode {}, addresses: {:?}",
                         if reread_mode_for_this_win {
@@ -583,6 +640,7 @@ fn test_device(
                         error
                     );
                 }
+                last_buffer_out.check_vec_first()?;
             }
         }
         let elapsed = start.elapsed();
@@ -596,6 +654,9 @@ fn test_device(
                 speed_gbps = 0f32;
             }
             println!("{:7} iteration. Since last report passed {:15?} written {:6.1}GB, read: {:6.1}GB   {:6.1}GB/sec", iteration, elapsed, written_bytes as f32 / GB, read_bytes as f32 / GB, speed_gbps);
+            if debug_mode {
+                println!("{}", last_buffer_out);
+            }
             written_bytes = 0i64;
             read_bytes = 0i64;
             let second1 = time::Duration::from_secs(1);
