@@ -57,9 +57,12 @@ fn test_value_by_index(i:u32)->vec4<u32>
 
 @compute @workgroup_size(64, 1, 1)
 fn read(@builtin(global_invocation_id) global_invocation_id: vec3<u32>) {
-
-    let actual_value : vec4<u32> = test[global_invocation_id[0]];
-    let expected_value : vec4<u32> = test_value_by_index(global_invocation_id[0]);
+    let TEST_WINDOW_READ_ADDR_ROTATION_GRANULARITY: u32 = 0x20000u;//don't inner-multiply by window size
+    let addr_mod = global_invocation_id[0] % TEST_WINDOW_READ_ADDR_ROTATION_GRANULARITY;
+    let new_mod = (global_invocation_id[0] + io.calc_param) % TEST_WINDOW_READ_ADDR_ROTATION_GRANULARITY;
+    let effective_addr = global_invocation_id[0] - addr_mod + new_mod; //make read order a bit rotated, not strictly sequential
+    let actual_value : vec4<u32> = test[effective_addr];
+    let expected_value : vec4<u32> = test_value_by_index(effective_addr);
     if any(actual_value != expected_value) {
         //slow path, executed only on errors found
         for(var i: i32 = 0; i < 4; i++) {
@@ -75,8 +78,8 @@ fn read(@builtin(global_invocation_id) global_invocation_id: vec3<u32>) {
                 atomicAdd(&io.err_bit1_idx[bit_idx], 1u);
             }
             atomicAdd(&io.err_bitcount[one_bits % 32u], 1u);
-            atomicMax(&io.idx_max, global_invocation_id[0] * 4u + i);
-            atomicMin(&io.idx_min, global_invocation_id[0] * 4u + i);
+            atomicMax(&io.idx_max, effective_addr * 4u + i);
+            atomicMin(&io.idx_min, effective_addr * 4u + i);
             atomicMax(&io.done_iter_or_err, 0xFFFFFFFFu); //ERROR_STATUS
             let actual_bits = countOneBits(actual_u32);
             if actual_bits == 32
@@ -92,9 +95,9 @@ fn read(@builtin(global_invocation_id) global_invocation_id: vec3<u32>) {
         }
     }
     //assign done_iter_or_err only on specific index (performance reasons)
-    if global_invocation_id[0] == 0 {
+    if effective_addr == 0 {
         atomicMax(&io.done_iter_or_err, io.iter);
-    } else if global_invocation_id[0] == 1 {
+    } else if effective_addr == 1 {
         io.first_elem = expected_value;
     }
 }
@@ -206,7 +209,7 @@ impl IOBuf {
         self.set_calc_param_for_starting_window();
     }
     fn set_calc_param_for_starting_window(&mut self) {
-        self.calc_param = self.iter.wrapping_mul(0x100100);
+        self.calc_param = self.iter.wrapping_mul(0x100107);
     }
     fn reset_errors(&mut self) {
         *self = IOBuf {
