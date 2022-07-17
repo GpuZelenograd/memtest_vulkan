@@ -87,7 +87,7 @@ impl Reader {
             match terminal.read_event(Some(std::time::Duration::ZERO)) {
                 Ok(None) => break,
                 Err(_) => return,
-                _ => continue
+                _ => continue,
             }
         }
         if terminal
@@ -96,12 +96,11 @@ impl Reader {
         {
             return;
         }
-        loop
-        {
+        loop {
             match terminal.read_event(None) {
                 Err(_) => return,
                 Ok(Some(Event::NoEvent)) => continue,
-                _user_event => break
+                _user_event => break,
             };
         }
         let _ignored = terminal.set_fg(None);

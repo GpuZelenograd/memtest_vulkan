@@ -146,12 +146,11 @@ struct MostlyZeroArr<const LEN: usize>([u32; LEN]);
 
 impl<const LEN: usize> fmt::Display for MostlyZeroArr<LEN> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        if LEN < 8
-        {
+        if LEN < 8 {
             for i in 0..LEN {
                 write!(f, "0x{:08X} ", self.0[i])?;
             }
-            return Ok(())
+            return Ok(());
         }
         let mut zero_count = 0;
         for i in 0..LEN {
@@ -201,7 +200,6 @@ impl fmt::Display for IOBuf {
     }
 }
 
-
 impl IOBuf {
     fn prepare_next_iter_write(&mut self) {
         self.reset_errors();
@@ -235,15 +233,14 @@ impl IOBuf {
             ))
         }
     }
-    fn check_vec_first(&self) -> Result<(), Box<dyn std::error::Error>>
-    {
+    fn check_vec_first(&self) -> Result<(), Box<dyn std::error::Error>> {
         const TEST_IDX: u32 = 1;
-        let addr : u32 = TEST_IDX * VEC_SIZE as u32 + self.calc_param + 1u32;
+        let addr: u32 = TEST_IDX * VEC_SIZE as u32 + self.calc_param + 1u32;
         let shift = addr % 31u32;
         let rotated = addr << shift | addr >> (32 - shift);
         if rotated != self.first_elem.0[0] {
             println!("{} 0x{:08X}", self, rotated);
-            return Err("unexpected calculated value, maybe shader execution is broken".into())
+            return Err("unexpected calculated value, maybe shader execution is broken".into());
         }
         Ok(())
     }
@@ -304,18 +301,22 @@ fn test_device(
     let mut allocation_size = 0i64;
     if debug_mode {
         for i in 0..memory_props.memory_type_count as usize {
-            println!("memory type flags {:?} heap {}", memory_props.memory_types[i].property_flags, memory_props.memory_types[i].heap_index);
+            println!(
+                "memory type flags {:?} heap {}",
+                memory_props.memory_types[i].property_flags,
+                memory_props.memory_types[i].heap_index
+            );
         }
     }
     for i in 0..memory_props.memory_heap_count as usize {
-        if debug_mode
-        {
-            println!("heap size {:4.1}GB budget {:4.1}GB usage {:4.1}GB flags={:#?}",
-                memory_props.memory_heaps[i].size as f32/GB,
-                budget_structure.heap_budget[i] as f32/GB,
-                budget_structure.heap_usage[i] as f32/GB,
+        if debug_mode {
+            println!(
+                "heap size {:4.1}GB budget {:4.1}GB usage {:4.1}GB flags={:#?}",
+                memory_props.memory_heaps[i].size as f32 / GB,
+                budget_structure.heap_budget[i] as f32 / GB,
+                budget_structure.heap_usage[i] as f32 / GB,
                 memory_props.memory_heaps[i].flags,
-                )
+            )
         }
         if !memory_props.memory_heaps[i]
             .flags
