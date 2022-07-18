@@ -152,16 +152,23 @@ impl<const LEN: usize> fmt::Display for MostlyZeroArr<LEN> {
             }
             return Ok(());
         }
-        let mut zero_count = 0;
         for i in 0..LEN {
+            if i % 16 == 0 && i != 0 { write!(f, "   0x{:X}? ", i/16)?; }
             let vali = self.0[i];
-            if vali != 0 {
-                write!(f, "[{}]={},", i, vali)?;
+            if vali > 999999u32 {
+                write!(f, "{:3}m", vali/1000000u32)?;
+            } else if vali > 9999u32 {
+                write!(f, "{:3}k", vali/1000u32)?;
+            } else if vali > 0 {
+                write!(f, "{:4}", vali)?;
             } else {
-                zero_count += 1;
+                write!(f, "    ")?; //zero
             }
+            if i % 16 == 15 { writeln!(f, "")?; }
+            else if i % 4 == 3 { write!(f, "|")?; }
+            else if i % 4 == 1 { write!(f, " ")?; }
         }
-        write!(f, "{} ZEROs", zero_count)
+        Ok(())
     }
 }
 
@@ -190,12 +197,13 @@ struct IOBuf {
 
 impl fmt::Display for IOBuf {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        writeln!(f, "err_bit1_idx: {} ", self.err_bit1_idx)?;
-        writeln!(f, "err_bitcount: {} ", self.err_bitcount)?;
-        writeln!(f, "mem_bitcount: {} ", self.mem_bitcount)?;
-        writeln!(f, "actual_ff: {} actual_max: 0x{:08X} actual_min: 0x{:08X} done_iter_or_err:{} iter:{} calc_param 0x{:08X} idxs:{}-{}",
-                self.actual_ff, self.actual_max, self.actual_min, self.done_iter_or_err, self.iter, self.calc_param, self.idx_min, self.idx_max)?;
-        writeln!(f, "first_elem: {} ", self.first_elem)?;
+        writeln!(f, "         0x0 0x1  0x2 0x3| 0x4 0x5  0x6 0x7| 0x8 0x9  0xA 0xB| 0xC 0xD  0xE 0xF")?;
+        write!(f, "Err1BIdx{}", self.err_bit1_idx)?;
+        write!(f, "ErrBiCnt{}", self.err_bitcount)?;
+        write!(f, "MemBiCnt{}", self.mem_bitcount)?;
+        writeln!(f, "actual_ff: {} actual_max: 0x{:08X} actual_min: 0x{:08X} done_iter_or_err:{} iter:{} calc_param 0x{:08X}",
+                self.actual_ff, self.actual_max, self.actual_min, self.done_iter_or_err, self.iter, self.calc_param)?;
+        write!(f, "idxs:{}-{} first_elem: {}", self.idx_min, self.idx_max, self.first_elem)?;
         Ok(())
     }
 }
@@ -220,16 +228,18 @@ impl IOBuf {
             ..Self::default()
         };
     }
-    fn get_error_addresses(
+    fn get_error_addresses_and_count(
         &self,
-        buf_offset: i64,
-    ) -> Option<std::ops::RangeInclusive<U64HexDebug>> {
+        buf_offset: i64
+    ) -> Option<(std::ops::RangeInclusive<U64HexDebug>, i64)> {
         if self.done_iter_or_err == self.iter {
             None
         } else {
-            Some(std::ops::RangeInclusive::<U64HexDebug>::new(
+            let total_errors = self.mem_bitcount.0.iter().sum::<u32>() as i64;
+            Some((std::ops::RangeInclusive::<U64HexDebug>::new(
                 U64HexDebug(buf_offset + self.idx_min as i64 * ELEMENT_SIZE),
-                U64HexDebug(buf_offset + (self.idx_max + 1) as i64 * ELEMENT_SIZE - 1),
+                U64HexDebug(buf_offset + (self.idx_max + 1) as i64 * ELEMENT_SIZE - 1)),
+                total_errors
             ))
         }
     }
@@ -631,18 +641,22 @@ fn test_device(
                 unsafe {
                     last_buffer_out = std::ptr::read(mapped);
                 }
-                if let Some(error) = last_buffer_out.get_error_addresses(test_offset) {
+                if let Some((error_range, total_errors)) = last_buffer_out.get_error_addresses_and_count(test_offset) {
                     no_errors = false;
-                    println!("{}", last_buffer_out);
-                    println!(
-                        "Error found. Mode {}, addresses: {:?}",
+                    let test_elems = test_window_size/ELEMENT_SIZE;
+                    print!(
+                        "Error found. Mode {}, total errors 0x{:X} out of 0x{:X} ({:2.8}%)\nErrors address range: {:?}",
                         if reread_mode_for_this_win {
                             "NEXT_RE_READ"
                         } else {
                             "INITIAL_READ"
                         },
-                        error
+                        total_errors,
+                        test_elems,
+                        total_errors as f64/test_elems as f64 * 100.0f64,
+                        error_range,
                     );
+                    println!("  deatils:\n{}", last_buffer_out);
                 }
                 last_buffer_out.check_vec_first()?;
             }
