@@ -1,4 +1,5 @@
 mod input;
+mod output;
 
 use byte_strings::c_str;
 use core::cmp::{max, min};
@@ -153,20 +154,26 @@ impl<const LEN: usize> fmt::Display for MostlyZeroArr<LEN> {
             return Ok(());
         }
         for i in 0..LEN {
-            if i % 16 == 0 && i != 0 { write!(f, "   0x{:X}? ", i/16)?; }
+            if i % 16 == 0 && i != 0 {
+                write!(f, "   0x{:X}? ", i / 16)?;
+            }
             let vali = self.0[i];
             if vali > 999999u32 {
-                write!(f, "{:3}m", vali/1000000u32)?;
+                write!(f, "{:3}m", vali / 1000000u32)?;
             } else if vali > 9999u32 {
-                write!(f, "{:3}k", vali/1000u32)?;
+                write!(f, "{:3}k", vali / 1000u32)?;
             } else if vali > 0 {
                 write!(f, "{:4}", vali)?;
             } else {
                 write!(f, "    ")?; //zero
             }
-            if i % 16 == 15 { writeln!(f, "")?; }
-            else if i % 4 == 3 { write!(f, "|")?; }
-            else if i % 4 == 1 { write!(f, " ")?; }
+            if i % 16 == 15 {
+                writeln!(f, "")?;
+            } else if i % 4 == 3 {
+                write!(f, "|")?;
+            } else if i % 4 == 1 {
+                write!(f, " ")?;
+            }
         }
         Ok(())
     }
@@ -197,13 +204,20 @@ struct IOBuf {
 
 impl fmt::Display for IOBuf {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        writeln!(f, "         0x0 0x1  0x2 0x3| 0x4 0x5  0x6 0x7| 0x8 0x9  0xA 0xB| 0xC 0xD  0xE 0xF")?;
+        writeln!(
+            f,
+            "         0x0 0x1  0x2 0x3| 0x4 0x5  0x6 0x7| 0x8 0x9  0xA 0xB| 0xC 0xD  0xE 0xF"
+        )?;
         write!(f, "Err1BIdx{}", self.err_bit1_idx)?;
         write!(f, "ErrBiCnt{}", self.err_bitcount)?;
         write!(f, "MemBiCnt{}", self.mem_bitcount)?;
         writeln!(f, "actual_ff: {} actual_max: 0x{:08X} actual_min: 0x{:08X} done_iter_or_err:{} iter:{} calc_param 0x{:08X}",
                 self.actual_ff, self.actual_max, self.actual_min, self.done_iter_or_err, self.iter, self.calc_param)?;
-        write!(f, "idxs:{}-{} first_elem: {}", self.idx_min, self.idx_max, self.first_elem)?;
+        write!(
+            f,
+            "idxs:{}-{} first_elem: {}",
+            self.idx_min, self.idx_max, self.first_elem
+        )?;
         Ok(())
     }
 }
@@ -230,16 +244,18 @@ impl IOBuf {
     }
     fn get_error_addresses_and_count(
         &self,
-        buf_offset: i64
+        buf_offset: i64,
     ) -> Option<(std::ops::RangeInclusive<U64HexDebug>, i64)> {
         if self.done_iter_or_err == self.iter {
             None
         } else {
             let total_errors = self.mem_bitcount.0.iter().sum::<u32>() as i64;
-            Some((std::ops::RangeInclusive::<U64HexDebug>::new(
-                U64HexDebug(buf_offset + self.idx_min as i64 * ELEMENT_SIZE),
-                U64HexDebug(buf_offset + (self.idx_max + 1) as i64 * ELEMENT_SIZE - 1)),
-                total_errors
+            Some((
+                std::ops::RangeInclusive::<U64HexDebug>::new(
+                    U64HexDebug(buf_offset + self.idx_min as i64 * ELEMENT_SIZE),
+                    U64HexDebug(buf_offset + (self.idx_max + 1) as i64 * ELEMENT_SIZE - 1),
+                ),
+                total_errors,
             ))
         }
     }
@@ -292,8 +308,22 @@ fn test_device(
     physical_device: vk::PhysicalDevice,
     queue_family_index: u32,
     device_create_info: vk::DeviceCreateInfo,
+    name: String,
     debug_mode: bool,
 ) -> Result<bool, Box<dyn std::error::Error>> {
+    const MAX_LOG_SIZE: u64 = 50 * 1024 * 1024;
+    //log is put in current directory. This is intentional - run from other dir to use another log
+    let mut log_dupler = output::LogDupler::new(
+        std::io::stdout(),
+        std::fs::OpenOptions::new()
+            .read(true)
+            .append(true)
+            .create(true)
+            .open("memtest_vulkan.log")
+            .ok(),
+        MAX_LOG_SIZE,
+    );
+    writeln!(log_dupler, "Testing {}", name)?;
     let device = unsafe { DeviceLoader::new(&instance, physical_device, &device_create_info) }?;
     let queue = unsafe { device.get_device_queue(queue_family_index, 0) };
 
@@ -641,10 +671,12 @@ fn test_device(
                 unsafe {
                     last_buffer_out = std::ptr::read(mapped);
                 }
-                if let Some((error_range, total_errors)) = last_buffer_out.get_error_addresses_and_count(test_offset) {
+                if let Some((error_range, total_errors)) =
+                    last_buffer_out.get_error_addresses_and_count(test_offset)
+                {
                     no_errors = false;
-                    let test_elems = test_window_size/ELEMENT_SIZE;
-                    print!(
+                    let test_elems = test_window_size / ELEMENT_SIZE;
+                    write!(log_dupler,
                         "Error found. Mode {}, total errors 0x{:X} out of 0x{:X} ({:2.8}%)\nErrors address range: {:?}",
                         if reread_mode_for_this_win {
                             "NEXT_RE_READ"
@@ -655,8 +687,8 @@ fn test_device(
                         test_elems,
                         total_errors as f64/test_elems as f64 * 100.0f64,
                         error_range,
-                    );
-                    println!("  deatils:\n{}", last_buffer_out);
+                    )?;
+                    writeln!(log_dupler, "  deatils:\n{}", last_buffer_out)?;
                 }
                 last_buffer_out.check_vec_first()?;
             }
@@ -671,7 +703,7 @@ fn test_device(
             } else {
                 speed_gbps = 0f32;
             }
-            println!("{:7} iteration. Since last report passed {:15?} written {:6.1}GB, read: {:6.1}GB   {:6.1}GB/sec", iteration, elapsed, written_bytes as f32 / GB, read_bytes as f32 / GB, speed_gbps);
+            writeln!(log_dupler, "{:7} iteration. Since last report passed {:15?} written {:6.1}GB, read: {:6.1}GB   {:6.1}GB/sec", iteration, elapsed, written_bytes as f32 / GB, read_bytes as f32 / GB, speed_gbps)?;
             if debug_mode {
                 println!("{}", last_buffer_out);
             }
@@ -926,8 +958,6 @@ fn init_vk_and_check_no_errors(debug_mode: bool) -> Result<bool, Box<dyn std::er
             .get(selected_index)
             .ok_or("No device at given index")?);
 
-        println!("Testing {}", numbered_devices[selected_index]);
-
         let queue_create_info = vec![vk::DeviceQueueCreateInfoBuilder::new()
             .queue_family_index(queue_family)
             .queue_priorities(&[1.0])];
@@ -941,6 +971,7 @@ fn init_vk_and_check_no_errors(debug_mode: bool) -> Result<bool, Box<dyn std::er
             physical_device,
             queue_family,
             *device_create_info,
+            numbered_devices.swap_remove(selected_index),
             debug_mode,
         )?;
     } else {
