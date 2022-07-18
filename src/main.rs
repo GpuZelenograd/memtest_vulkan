@@ -75,8 +75,9 @@ fn read(@builtin(global_invocation_id) global_invocation_id: vec3<u32>) {
                 atomicAdd(&io.err_bit1_idx[bit_idx], 1u);
             }
             atomicAdd(&io.err_bitcount[one_bits % 32u], 1u);
-            atomicMax(&io.idx_max, effective_addr * 4u + i);
-            atomicMin(&io.idx_min, effective_addr * 4u + i);
+            let vec_addr: u32 = effective_addr * 4u + i;
+            atomicMax(&io.idx_max, vec_addr);
+            atomicMin(&io.idx_min, vec_addr);
             atomicMax(&io.done_iter_or_err, 0xFFFFFFFFu); //ERROR_STATUS
             let actual_bits = countOneBits(actual_u32);
             if actual_bits == 32
@@ -150,6 +151,14 @@ impl<const LEN: usize> fmt::Display for MostlyZeroArr<LEN> {
             return Ok(());
         }
         for i in 0..LEN {
+            let next_row = i / 16;
+            if next_row > 0
+                && self.0[next_row * 16..next_row * 16 + 16]
+                    .iter()
+                    .all(|v| v == &0u32)
+            {
+                continue; //skip entire line of zeroes
+            }
             if i % 16 == 0 && i != 0 {
                 write!(f, "   0x{:X}? ", i / 16)?;
             }
