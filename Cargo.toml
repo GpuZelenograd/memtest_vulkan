@@ -8,10 +8,20 @@ version = '0.2.0'
 
 [dependencies]
 byte-strings = '0.2.2'
-ctrlc = '3.2.2'
 mortal = '0.2.3'
 fs4 = '0.6.2'
 chrono = '0.4.19'
+
+[target.'cfg(windows)'.dependencies.windows-sys]
+default-features = false
+features = ['Win32_System_Console', 'Win32_Foundation']
+version = '0.36.1'
+
+[target.'cfg(unix)'.dependencies.nix]
+default-features = false
+features = ['signal']
+version = '0.24.2'
+
 
 [dependencies.erupt]
 default-features = false

@@ -65,6 +65,10 @@ impl Reader {
         }
     }
     pub fn set_pass_fail_accent_color(&mut self, passed: bool) {
+        if crate::close::close_requested() {
+            //color methods not available while closing on windows
+            return;
+        }
         use mortal::terminal::Color;
         if !self.try_prepare_terminal() {
             //terminal input not available, don't perform wait.
@@ -78,6 +82,13 @@ impl Reader {
     }
 
     pub fn wait_any_key(&mut self) {
+        if crate::close::close_requested() {
+            //interaction methods not available while closing on windows
+            println!("(don't waiting for a keypress, since close requested)");
+            std::thread::sleep(std::time::Duration::from_secs(3));
+            return;
+        }
+
         if !self.try_prepare_terminal() {
             //terminal input not available, don't perform wait.
             return;
@@ -147,6 +158,9 @@ impl Reader {
 
 impl Drop for Reader {
     fn drop(&mut self) {
+        if crate::close::close_requested() {
+            return;//don't touch console methods while closing
+        }
         if let Some(terminal) = &mut self.terminal {
             if let Some(state) = self.prepare_state.take() {
                 let _ = terminal.set_fg(None);

@@ -1,5 +1,6 @@
 mod input;
 mod output;
+mod close;
 
 use byte_strings::c_str;
 use core::cmp::{max, min};
@@ -12,10 +13,6 @@ use std::{
     fmt,
     io::Write,
     mem,
-    sync::{
-        atomic::{AtomicBool, Ordering::SeqCst},
-        Arc,
-    },
     time,
 };
 
@@ -315,12 +312,7 @@ fn test_device(
     //log is put in current directory. This is intentional - run from other dir to use another log
     let mut log_dupler = output::LogDupler::new(
         std::io::stdout(),
-        std::fs::OpenOptions::new()
-            .read(true)
-            .append(true)
-            .create(true)
-            .open("memtest_vulkan.log")
-            .ok(),
+        Some("memtest_vulkan.log".into()),
         MAX_LOG_SIZE,
     );
     writeln!(log_dupler, "Testing {}", name)?;
@@ -632,7 +624,6 @@ fn test_device(
     let mut read_bytes = 0i64;
     let mut next_report_duration = time::Duration::from_secs(0);
     let mut start = time::Instant::now();
-    let stop_requested = Arc::new(AtomicBool::new(false));
     let mut buffer_in = IOBuf::default();
     let mut no_errors = true;
     for iteration in 1..=iter_count {
@@ -694,7 +685,7 @@ fn test_device(
             }
         }
         let elapsed = start.elapsed();
-        let stop_testing = stop_requested.load(SeqCst);
+        let stop_testing = close::close_requested();
         if elapsed > next_report_duration || stop_testing {
             let passed_secs = elapsed.as_secs_f32();
             let speed_gbps;
@@ -712,11 +703,7 @@ fn test_device(
             let second1 = time::Duration::from_secs(1);
             if next_report_duration.is_zero() {
                 next_report_duration = second1; //2nd report after 1 second
-                let stop_requested_setter = stop_requested.clone();
-                ctrlc::set_handler(move || {
-                    println!("   received user interruption, would stop on next iteration");
-                    stop_requested_setter.store(true, SeqCst);
-                })?;
+                close::setup_handler();
             } else if next_report_duration == second1 {
                 next_report_duration = second1 * 10; //3rd report after 10 seconds
             } else {
@@ -725,6 +712,7 @@ fn test_device(
             start = time::Instant::now();
         }
         if stop_testing {
+            writeln!(log_dupler, "received user interruption, testing stopped")?;
             break;
         }
     }
@@ -1014,8 +1002,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         key_reader.set_pass_fail_accent_color(passed);
     }
     match result {
-        Ok(false) => println!("memtest_vulkan: memory/GPU errors found, testing finished."),
-        Ok(true) => println!("memtest_vulkan: no any errors found, testing finished."),
+        Ok(false) => println!("memtest_vulkan: memory/gpu ERRORS FOUND, testing finished."),
+        Ok(true) => println!("memtest_vulkan: no any errors, testing finished."),
         Err(e) => println!("memtest_vulkan: testing not done: {}", e),
     }
     key_reader.wait_any_key();

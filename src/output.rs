@@ -51,22 +51,41 @@ impl fmt::Display for NowTime {
 pub struct LogDupler<Writer: io::Write> {
     pub writer: Writer,
     pub log_file: Option<File>,
+    pub log_file_name: Option<String>,
     pub max_size: u64,
     pub unlogged_buffer: VecDeque<u8>,
 }
 
 impl<Writer: io::Write> LogDupler<Writer> {
-    pub fn new(writer: Writer, log_file: Option<File>, max_size: u64) -> Self {
+    pub fn new(writer: Writer, log_file_name: Option<String>, max_size: u64) -> Self {
         let mut initial_buf: Vec<u8> = Default::default();
         let _ = writeln!(&mut initial_buf, "logging started at {}", NowTime);
         Self {
             writer: writer,
-            log_file: log_file,
+            log_file: None,
+            log_file_name: log_file_name,
             max_size: max_size,
             unlogged_buffer: initial_buf.into(),
         }
     }
+    fn try_open(&mut self)->bool {
+        if self.log_file.is_none() {
+            if let Some(name) = &self.log_file_name {
+                self.log_file = std::fs::OpenOptions::new()
+                .read(true)
+                .append(true)
+                .create(true)
+                .open(name)
+                .ok();
+            }
+        }
+        self.log_file.is_some()
+    }
+
     fn write_deq_start(&mut self, len: usize) {
+        self.try_open();
+        let mut kept_buf = Vec::<_>::new();
+
         if let Some(file) = &self.log_file {
             if let Ok(mut locked) = FileLock::wrap_exclusive(&file) {
                 let _ = locked.write_all(&self.unlogged_buffer.make_contiguous()[..len]);
@@ -74,28 +93,47 @@ impl<Writer: io::Write> LogDupler<Writer> {
                     let current_len = metadata.len();
                     if current_len > self.max_size {
                         let cut_len = current_len - self.max_size / 2u64;
-                        let mut kept_buf = Vec::<_>::new();
-                        if locked.seek(SeekFrom::Start(cut_len)).is_ok()
-                            && locked.read_to_end(&mut kept_buf).is_ok()
-                            && locked.set_len(0).is_ok()
-                            && locked.rewind().is_ok()
-                            && write!(locked, "... earlier log truncated at {}", NowTime).is_ok()
-                        {
-                            let _ = {
-                                if let Some(line_end_pos) =
-                                    kept_buf.iter().position(|c| c == &b'\n')
-                                {
-                                    locked.write_all(&kept_buf[line_end_pos..])
-                                } else {
-                                    writeln!(locked, "")
-                                }
-                            };
+                        if locked.seek(SeekFrom::Start(cut_len)).is_ok() {
+                            if !locked.read_to_end(&mut kept_buf).is_ok() {
+                                kept_buf.clear();
+                                let _ = locked.seek(SeekFrom::End(0));
+                            }
                         }
                     }
                 }
+                drop(locked);
             }
         }
         self.unlogged_buffer.drain(..len);
+        if kept_buf.is_empty() {
+            return;
+        }
+        self.log_file = None;
+        //trunctating on windows requires opening in non-append mode
+        if let Ok(file_to_truncate) = std::fs::OpenOptions::new()
+                .write(true)
+                .open(self.log_file_name.as_ref().unwrap()) {
+            if !file_to_truncate.set_len(0).is_ok() {
+                return;
+            }
+            drop(file_to_truncate);
+        }
+        self.try_open();
+        if let Some(file) = &self.log_file {
+            if let Ok(mut locked) = FileLock::wrap_exclusive(&file) {
+                if locked.rewind().is_ok() && write!(locked, "... earlier log truncated at {}", NowTime).is_ok() {
+                    let _ = {
+                        if let Some(line_end_pos) =
+                            kept_buf.iter().position(|c| c == &b'\n')
+                        {
+                            locked.write_all(&kept_buf[line_end_pos..])
+                        } else {
+                            writeln!(locked, "")
+                        }
+                    };
+                }
+            }
+        }
     }
 }
 
