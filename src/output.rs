@@ -68,15 +68,15 @@ impl<Writer: io::Write> LogDupler<Writer> {
             unlogged_buffer: initial_buf.into(),
         }
     }
-    fn try_open(&mut self)->bool {
+    fn try_open(&mut self) -> bool {
         if self.log_file.is_none() {
             if let Some(name) = &self.log_file_name {
                 self.log_file = std::fs::OpenOptions::new()
-                .read(true)
-                .append(true)
-                .create(true)
-                .open(name)
-                .ok();
+                    .read(true)
+                    .append(true)
+                    .create(true)
+                    .open(name)
+                    .ok();
             }
         }
         self.log_file.is_some()
@@ -111,8 +111,9 @@ impl<Writer: io::Write> LogDupler<Writer> {
         self.log_file = None;
         //trunctating on windows requires opening in non-append mode
         if let Ok(file_to_truncate) = std::fs::OpenOptions::new()
-                .write(true)
-                .open(self.log_file_name.as_ref().unwrap()) {
+            .write(true)
+            .open(self.log_file_name.as_ref().unwrap())
+        {
             if !file_to_truncate.set_len(0).is_ok() {
                 return;
             }
@@ -121,11 +122,11 @@ impl<Writer: io::Write> LogDupler<Writer> {
         self.try_open();
         if let Some(file) = &self.log_file {
             if let Ok(mut locked) = FileLock::wrap_exclusive(&file) {
-                if locked.rewind().is_ok() && write!(locked, "... earlier log truncated at {}", NowTime).is_ok() {
+                if locked.rewind().is_ok()
+                    && write!(locked, "... earlier log truncated at {}", NowTime).is_ok()
+                {
                     let _ = {
-                        if let Some(line_end_pos) =
-                            kept_buf.iter().position(|c| c == &b'\n')
-                        {
+                        if let Some(line_end_pos) = kept_buf.iter().position(|c| c == &b'\n') {
                             locked.write_all(&kept_buf[line_end_pos..])
                         } else {
                             writeln!(locked, "")

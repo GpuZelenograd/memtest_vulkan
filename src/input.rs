@@ -159,7 +159,7 @@ impl Reader {
 impl Drop for Reader {
     fn drop(&mut self) {
         if crate::close::close_requested() {
-            return;//don't touch console methods while closing
+            return; //don't touch console methods while closing
         }
         if let Some(terminal) = &mut self.terminal {
             if let Some(state) = self.prepare_state.take() {

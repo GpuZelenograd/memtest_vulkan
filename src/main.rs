@@ -1,6 +1,6 @@
+mod close;
 mod input;
 mod output;
-mod close;
 
 use byte_strings::c_str;
 use core::cmp::{max, min};
@@ -12,8 +12,7 @@ use std::{
     ffi::{c_void, CStr},
     fmt,
     io::Write,
-    mem,
-    time,
+    mem, time,
 };
 
 const LAYER_KHRONOS_VALIDATION: &CStr = c_str!("VK_LAYER_KHRONOS_validation");
