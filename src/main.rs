@@ -228,6 +228,11 @@ impl fmt::Display for IOBuf {
 }
 
 impl IOBuf {
+    fn for_initial_iteration() -> Self {
+        let mut result = Self::default();
+        result.prepare_next_iter_write();
+        result
+    }
     fn prepare_next_iter_write(&mut self) {
         self.reset_errors();
         self.iter += 1;
@@ -268,7 +273,11 @@ impl IOBuf {
         const TEST_IDX: u32 = 1;
         let addr: u32 = TEST_IDX * VEC_SIZE as u32 + self.calc_param + 1u32;
         let shift = addr % 31u32;
-        let rotated = addr << shift | addr >> (32 - shift);
+        let rotated = if shift > 0 {
+            addr << shift | addr >> (32 - shift)
+        } else {
+            addr
+        };
         if rotated != self.first_elem.0[0] {
             println!("{} 0x{:08X}", self, rotated);
             return Err("unexpected calculated value, maybe shader execution is broken".into());
@@ -307,6 +316,37 @@ unsafe extern "system" fn debug_callback(
 
     vk::FALSE
 }
+fn memory_requirements(
+    device: &erupt::DeviceLoader,
+    min_wanted_allocation: i64,
+) -> Result<(vk::MemoryRequirements, vk::BufferCreateInfoBuilder), Box<dyn std::error::Error>> {
+    let test_buffer_create_info = vk::BufferCreateInfoBuilder::new()
+        .sharing_mode(vk::SharingMode::EXCLUSIVE)
+        .usage(vk::BufferUsageFlags::STORAGE_BUFFER)
+        .size(min_wanted_allocation as u64);
+    let test_buffer =
+        unsafe { device.create_buffer(&test_buffer_create_info, None) }.err_as_str()?;
+    let test_mem_reqs = unsafe { device.get_buffer_memory_requirements(test_buffer) };
+    unsafe { device.destroy_buffer(test_buffer, None) }; //buffer was used for getting memory reuirements. After allocation size may be smaller
+    Ok((test_mem_reqs, test_buffer_create_info))
+}
+
+fn free_test_mem_and_buffers(
+    device: &erupt::DeviceLoader,
+    buffer: &mut Option<vk::Buffer>,
+    memory: &mut Option<vk::DeviceMemory>,
+) {
+    if let Some(some_buffer) = buffer.take() {
+        unsafe {
+            device.destroy_buffer(some_buffer, None);
+        }
+    }
+    if let Some(some_memory) = memory.take() {
+        unsafe {
+            device.free_memory(some_memory, None);
+        }
+    }
+}
 
 fn test_device(
     instance: &erupt::InstanceLoader,
@@ -314,7 +354,7 @@ fn test_device(
     queue_family_index: u32,
     device_create_info: vk::DeviceCreateInfo,
     name: String,
-    debug_mode: bool,
+    verbose: bool,
 ) -> Result<bool, Box<dyn std::error::Error>> {
     const MAX_LOG_SIZE: u64 = 50 * 1024 * 1024;
     //log is put in current directory. This is intentional - run from other dir to use another log
@@ -339,7 +379,7 @@ fn test_device(
     .memory_properties;
 
     let mut allocation_size = 0i64;
-    if debug_mode {
+    if verbose {
         for i in 0..memory_props.memory_type_count as usize {
             println!(
                 "memory type flags {:?} heap {}",
@@ -349,7 +389,7 @@ fn test_device(
         }
     }
     for i in 0..memory_props.memory_heap_count as usize {
-        if debug_mode {
+        if verbose {
             println!(
                 "heap size {:4.1}GB budget {:4.1}GB usage {:4.1}GB flags={:#?}",
                 memory_props.memory_heaps[i].size as f32 / GB,
@@ -397,7 +437,7 @@ fn test_device(
                 )
         })
         .ok_or("DEVICE_LOCAL | HOST_COHERENT memory type not available")?;
-    if debug_mode {
+    if verbose {
         println!(
             "IO memory                  type {}: {:?} heap {:?}",
             io_mem_index,
@@ -422,14 +462,10 @@ fn test_device(
     };
     unsafe { device.bind_buffer_memory(io_buffer, io_memory, 0) }.err_as_str()?;
 
-    let test_buffer_create_info = vk::BufferCreateInfoBuilder::new()
-        .sharing_mode(vk::SharingMode::EXCLUSIVE)
-        .usage(vk::BufferUsageFlags::STORAGE_BUFFER)
-        .size(allocation_size as u64);
-    let test_buffer =
-        unsafe { device.create_buffer(&test_buffer_create_info, None) }.err_as_str()?;
-    let test_mem_reqs = unsafe { device.get_buffer_memory_requirements(test_buffer) };
-    allocation_size = test_mem_reqs.size as i64;
+    let min_wanted_allocation = TEST_DATA_KEEP_FREE;
+    let (test_mem_reqs, test_buffer_create_info) =
+        memory_requirements(&device, min_wanted_allocation)?;
+
     let test_mem_index = (0..memory_props.memory_type_count)
         .find(|i| {
             //test buffer comptibility flags expressed as bitmask
@@ -443,54 +479,6 @@ fn test_device(
                     .contains(vk::MemoryPropertyFlags::DEVICE_LOCAL)
         })
         .ok_or("DEVICE_LOCAL test memory type not available")?;
-
-    let test_memory;
-    let mut warn_on_budget_alloc_fail = true;
-    loop {
-        let min_wanted_allocation = TEST_DATA_KEEP_FREE;
-        if allocation_size < min_wanted_allocation {
-            return Err("can't allocate memory enough for testing".into());
-        }
-
-        let test_memory_allocate_info = vk::MemoryAllocateInfoBuilder::new()
-            .allocation_size(allocation_size as u64)
-            .memory_type_index(test_mem_index);
-        let allocated = unsafe { device.allocate_memory(&test_memory_allocate_info, None) };
-        if let Some(ok_memory) = allocated.value {
-            test_memory = ok_memory;
-            break;
-        }
-        if warn_on_budget_alloc_fail {
-            warn_on_budget_alloc_fail = false;
-            println!("Failed allocating {:5.1}GB, tryning to use smaller size. More system memory can help.", allocation_size as f32 / GB);
-        }
-        allocation_size -= min_wanted_allocation;
-    }
-
-    if debug_mode {
-        println!(
-            "Test memory size {:5.1}GB   type {:2}: {:?} {:?}",
-            allocation_size as f32 / GB,
-            test_mem_index,
-            memory_props.memory_types[test_mem_index as usize],
-            memory_props.memory_heaps
-                [memory_props.memory_types[test_mem_index as usize].heap_index as usize]
-        );
-    }
-
-    let test_window_count = allocation_size / TEST_WINDOW_MAX_SIZE
-        + i64::from(allocation_size % TEST_WINDOW_MAX_SIZE != 0);
-    let test_window_count = max(test_window_count, 2); //at least 2 windows: for testing rereads and rws
-    let test_window_size = allocation_size / test_window_count;
-    let test_window_size = test_window_size - test_window_size % TEST_WINDOW_SIZE_GRANULARITY;
-    let test_data_size = test_window_size * test_window_count;
-
-    unsafe { device.destroy_buffer(test_buffer, None) }; //buffer was used for getting memory reuirements. After allocation size may be smaller
-
-    let test_buffer =
-        unsafe { device.create_buffer(&test_buffer_create_info.size(test_data_size as u64), None) }
-            .err_as_str()?;
-    unsafe { device.bind_buffer_memory(test_buffer, test_memory, 0) }.err_as_str()?;
 
     let desc_pool_sizes = &[vk::DescriptorPoolSizeBuilder::new()
         .descriptor_count(2)
@@ -577,68 +565,159 @@ fn test_device(
         .level(vk::CommandBufferLevel::PRIMARY);
     let cmd_buf = unsafe { device.allocate_command_buffers(&cmd_buf_info) }.err_as_str()?[0];
 
-    let test_element_count = (test_window_size / ELEMENT_SIZE) as u32;
-
     let fence_info = vk::FenceCreateInfoBuilder::new();
     let fence = unsafe { device.create_fence(&fence_info, None) }.err_as_str()?;
 
     let cmd_bufs = &[cmd_buf];
     let submit_info = &[vk::SubmitInfoBuilder::new().command_buffers(cmd_bufs)];
-    let execute_wait_queue =
-        |buf_offset: i64, pipeline: vk::Pipeline| -> Result<(), Box<dyn std::error::Error>> {
-            unsafe {
-                device.update_descriptor_sets(
-                    &[vk::WriteDescriptorSetBuilder::new()
-                        .dst_set(desc_set)
-                        .dst_binding(1)
-                        .descriptor_type(vk::DescriptorType::STORAGE_BUFFER)
-                        .buffer_info(&[vk::DescriptorBufferInfoBuilder::new()
-                            .buffer(test_buffer)
-                            .offset(buf_offset as u64)
-                            .range(test_window_size as u64)])],
-                    &[],
-                );
-                device
-                    .begin_command_buffer(cmd_buf, &vk::CommandBufferBeginInfo::default())
-                    .err_as_str()?;
-                device.cmd_bind_pipeline(cmd_buf, vk::PipelineBindPoint::COMPUTE, pipeline);
-                device.cmd_bind_descriptor_sets(
-                    cmd_buf,
-                    vk::PipelineBindPoint::COMPUTE,
-                    pipeline_layout,
-                    0,
-                    &[desc_set],
-                    &[],
-                );
-                device.cmd_dispatch(
-                    cmd_buf,
-                    test_element_count / WG_SIZE as u32 / VEC_SIZE as u32,
-                    1,
-                    1,
-                );
-                device.end_command_buffer(cmd_buf).err_as_str()?;
-                device
-                    .queue_submit(queue, submit_info, fence)
-                    .err_as_str()?;
-                device
-                    .wait_for_fences(&[fence], true, u64::MAX)
-                    .err_as_str()?;
-                device.reset_fences(&[fence]).err_as_str()?;
-                Ok(())
+    //all preparations except huge buffer allocation done. Now allocate huge buffer as a last step to minize chance of allocation failure for small structures
+
+    let mut test_memory = None;
+    let mut test_buffer = None;
+    let mut test_window_count;
+    let mut test_window_size;
+    let mut warn_on_budget_alloc_fail = true;
+    let mut execute_wait_queue;
+
+    //The error state before all allocation tries
+    let mut last_err: Box<dyn std::error::Error> =
+        "No heap reports memory enough for testing".into();
+    'memsize: loop {
+        free_test_mem_and_buffers(&device, &mut test_buffer, &mut test_memory);
+
+        if allocation_size < min_wanted_allocation {
+            return Err(last_err);
+        }
+
+        let test_memory_allocate_info = vk::MemoryAllocateInfoBuilder::new()
+            .allocation_size(allocation_size as u64)
+            .memory_type_index(test_mem_index);
+        match unsafe { device.allocate_memory(&test_memory_allocate_info, None) }.err_as_str() {
+            Err(err) => last_err = err,
+            Ok(some_memory) => {
+                test_memory = Some(some_memory);
+                test_window_count = allocation_size / TEST_WINDOW_MAX_SIZE
+                    + i64::from(allocation_size % TEST_WINDOW_MAX_SIZE != 0);
+                test_window_count = max(test_window_count, 2); //at least 2 windows: for testing rereads and rws
+                test_window_size = allocation_size / test_window_count;
+                test_window_size =
+                    test_window_size - test_window_size % TEST_WINDOW_SIZE_GRANULARITY;
+                let test_data_size = test_window_size * test_window_count;
+
+                match unsafe {
+                    device.create_buffer(&test_buffer_create_info.size(test_data_size as u64), None)
+                }
+                .err_as_str()
+                {
+                    Err(err) => last_err = err,
+                    Ok(some_buffer) => {
+                        test_buffer = Some(some_buffer);
+                        match unsafe { device.bind_buffer_memory(some_buffer, some_memory, 0) }
+                            .err_as_str()
+                        {
+                            Err(err) => last_err = err,
+                            Ok(_) => {
+                                execute_wait_queue = |buf_offset: i64, pipeline: vk::Pipeline| -> Result<(), Box<dyn std::error::Error>> {
+                                    let test_element_count = (test_window_size / ELEMENT_SIZE) as u32;
+                                    unsafe {
+                                        device.update_descriptor_sets(
+                                            &[vk::WriteDescriptorSetBuilder::new()
+                                                .dst_set(desc_set)
+                                                .dst_binding(1)
+                                                .descriptor_type(vk::DescriptorType::STORAGE_BUFFER)
+                                                .buffer_info(&[vk::DescriptorBufferInfoBuilder::new()
+                                                    .buffer(test_buffer.unwrap())
+                                                    .offset(buf_offset as u64)
+                                                    .range(test_window_size as u64)])],
+                                            &[],
+                                        );
+                                        device
+                                            .begin_command_buffer(cmd_buf, &vk::CommandBufferBeginInfo::default())
+                                            .err_as_str()?;
+                                        device.cmd_bind_pipeline(cmd_buf, vk::PipelineBindPoint::COMPUTE, pipeline);
+                                        device.cmd_bind_descriptor_sets(
+                                            cmd_buf,
+                                            vk::PipelineBindPoint::COMPUTE,
+                                            pipeline_layout,
+                                            0,
+                                            &[desc_set],
+                                            &[],
+                                        );
+                                        device.cmd_dispatch(
+                                            cmd_buf,
+                                            test_element_count / WG_SIZE as u32 / VEC_SIZE as u32,
+                                            1,
+                                            1,
+                                        );
+                                        device.end_command_buffer(cmd_buf).err_as_str()?;
+                                        device
+                                            .queue_submit(queue, submit_info, fence)
+                                            .err_as_str()?;
+                                        device
+                                            .wait_for_fences(&[fence], true, u64::MAX)
+                                            .err_as_str()?;
+                                        device.reset_fences(&[fence]).err_as_str()?;
+                                        Ok(())
+                                    }
+                                };
+                                unsafe { std::ptr::write(mapped, IOBuf::for_initial_iteration()) }
+                                //try to do initial memory fill to verify that allocation is really usable
+                                let mut overall_exec_result = Ok(());
+                                'window: for window_idx in 0..test_window_count {
+                                    let test_offset = test_window_size * window_idx;
+                                    match execute_wait_queue(test_offset, pipelines_r_w_emul[1]) {
+                                        Err(e) => {
+                                            overall_exec_result = Err(e);
+                                            break 'window;
+                                        }
+                                        Ok(()) => {}
+                                    }
+                                }
+                                match overall_exec_result {
+                                    Err(e) => last_err = e,
+                                    Ok(()) => break 'memsize,
+                                }
+                            }
+                        }
+                    }
+                }
             }
-        };
+        }
+        if warn_on_budget_alloc_fail {
+            warn_on_budget_alloc_fail = false;
+            println!("Failed allocating {:5.1}GB, trying to use smaller size. More system memory can help.", allocation_size as f32 / GB);
+        }
+        if verbose {
+            println!(
+                "Don't testing {:5.1}GB due to error: {}",
+                allocation_size as f32 / GB,
+                last_err
+            );
+        }
+        allocation_size -= min_wanted_allocation;
+    }
+
+    if verbose {
+        println!(
+            "Test memory size {:5.1}GB   type {:2}: {:?} {:?}",
+            allocation_size as f32 / GB,
+            test_mem_index,
+            memory_props.memory_types[test_mem_index as usize],
+            memory_props.memory_heaps
+                [memory_props.memory_types[test_mem_index as usize].heap_index as usize]
+        );
+    }
+
     let iter_count = 100000000; //by default exit after several days of testing
     let mut written_bytes = 0i64;
     let mut read_bytes = 0i64;
     let mut next_report_duration = time::Duration::from_secs(0);
     let mut start = time::Instant::now();
-    let mut buffer_in = IOBuf::default();
+    let mut buffer_in = IOBuf::for_initial_iteration();
     let mut no_errors = true;
     for iteration in 1..=iter_count {
-        buffer_in.prepare_next_iter_write();
         unsafe { std::ptr::write(mapped, buffer_in) }
-        let reread_mode_for_win_0 = iteration > 1; //don't write into win 0
-        for window_idx in (reread_mode_for_win_0 as i64)..test_window_count {
+        for window_idx in 1..test_window_count {
             let test_offset = test_window_size * window_idx;
             unsafe {
                 (*mapped).calc_param = buffer_in.calc_param + window_idx as u32 * 0x81 as u32;
@@ -649,15 +728,13 @@ fn test_device(
         buffer_in.set_calc_param_for_starting_window();
         let mut last_buffer_out: IOBuf = IOBuf::default();
         for window_idx in 0..test_window_count {
-            let reread_mode_for_this_win = reread_mode_for_win_0 && window_idx == 0;
+            let reread_mode_for_this_win = window_idx == 0;
             buffer_in.calc_param += window_idx as u32 * 0x81 as u32;
             unsafe {
                 std::ptr::write(
                     mapped,
                     if reread_mode_for_this_win {
-                        let mut io_buf = IOBuf::default();
-                        io_buf.prepare_next_iter_write();
-                        io_buf
+                        IOBuf::for_initial_iteration()
                     } else {
                         buffer_in
                     },
@@ -703,7 +780,7 @@ fn test_device(
                 speed_gbps = 0f32;
             }
             writeln!(log_dupler, "{:7} iteration. Since last report passed {:15?} written {:6.1}GB, read: {:6.1}GB   {:6.1}GB/sec", iteration, elapsed, written_bytes as f32 / GB, read_bytes as f32 / GB, speed_gbps)?;
-            if debug_mode {
+            if verbose {
                 println!("{}", last_buffer_out);
             }
             written_bytes = 0i64;
@@ -723,13 +800,13 @@ fn test_device(
             writeln!(log_dupler, "received user interruption, testing stopped")?;
             break;
         }
+        buffer_in.prepare_next_iter_write();
     }
     // Cleanup & Destruction
     unsafe {
         device.device_wait_idle().err_as_str()?;
 
-        device.destroy_buffer(test_buffer, None);
-        device.free_memory(test_memory, None);
+        free_test_mem_and_buffers(&device, &mut test_buffer, &mut test_memory);
 
         device.destroy_buffer(io_buffer, None);
         device.unmap_memory(io_memory);
@@ -750,11 +827,11 @@ fn test_device(
     Ok(no_errors)
 }
 
-fn init_vk_and_check_no_errors(debug_mode: bool) -> Result<bool, Box<dyn std::error::Error>> {
+fn init_vk_and_check_no_errors(verbose: bool) -> Result<bool, Box<dyn std::error::Error>> {
     let entry = EntryLoader::new()?;
-    if debug_mode {
+    if verbose {
         println!(
-            "Debug mode enabled ('debug' found in executable), running on Vulkan {}.{}.{}",
+            "Verbose feature enabled (or 'verbose' found in name). Vulkan instance {}.{}.{}",
             vk::api_version_major(entry.instance_version()),
             vk::api_version_minor(entry.instance_version()),
             vk::api_version_patch(entry.instance_version())
@@ -781,7 +858,7 @@ fn init_vk_and_check_no_errors(debug_mode: bool) -> Result<bool, Box<dyn std::er
         .map(|instance| {
             let mut severity = ext_debug_utils::DebugUtilsMessageSeverityFlagsEXT::WARNING_EXT
                 | ext_debug_utils::DebugUtilsMessageSeverityFlagsEXT::ERROR_EXT;
-            if debug_mode {
+            if verbose {
                 severity |= ext_debug_utils::DebugUtilsMessageSeverityFlagsEXT::INFO_EXT;
                 //lists all extensions, very verbose
                 //severity |= ext_debug_utils::DebugUtilsMessageSeverityFlagsEXT::VERBOSE_EXT;
@@ -865,7 +942,7 @@ fn init_vk_and_check_no_errors(debug_mode: bool) -> Result<bool, Box<dyn std::er
     for (i, d) in compute_capable_devices.iter().enumerate() {
         let props = d.2;
         let pci_props = d.4;
-        let api_info = if debug_mode {
+        let api_info = if verbose {
             std::format!(
                 "API v.{}.{}.{}",
                 vk::api_version_major(props.api_version),
@@ -899,7 +976,7 @@ fn init_vk_and_check_no_errors(debug_mode: bool) -> Result<bool, Box<dyn std::er
 
     let mut input_reader = input::Reader::default();
     let no_timer_prompt =
-        String::from("                                                   Enter index to test:");
+        String::from("                                                   Override index to test:");
     loop {
         let mut prompt = &no_timer_prompt;
         let formatted_prompt: String;
@@ -911,7 +988,7 @@ fn init_vk_and_check_no_errors(debug_mode: bool) -> Result<bool, Box<dyn std::er
             } else {
                 let duration_left = effective_duration - prompt_start.elapsed();
                 formatted_prompt = std::format!(
-                    "(first device will be autoselected in {} seconds)   Enter index to test:",
+                    "(first device will be autoselected in {} seconds)   Override index to test:",
                     duration_left.as_secs()
                 );
                 prompt = &formatted_prompt;
@@ -925,22 +1002,29 @@ fn init_vk_and_check_no_errors(debug_mode: bool) -> Result<bool, Box<dyn std::er
                 break;
             }
             input::ReaderEvent::Completed => {
-                if !input_reader.current_input.is_empty() {
-                    match input_reader.current_input.parse::<usize>() {
+                match input_reader.current_input.len()
+                    == input_reader.current_input.matches('0').count()
+                {
+                    true => {
+                        //empty or all zeroes
+                        println!("");
+                        println!("    ...testing default device confirmed");
+                    }
+                    false => match input_reader.current_input.parse::<usize>() {
                         Ok(parsed_idx) => {
                             let mut parsed = parsed_idx;
                             if parsed > 0 {
                                 parsed -= 1;
                             }
                             device_test_index = Some(parsed);
+                            println!("");
                         }
                         Err(_) => {
                             input_reader.current_input.clear();
                             continue;
                         }
-                    }
+                    },
                 }
-                println!("");
                 break;
             }
             input::ReaderEvent::Timeout => {} //just redraw prompt
@@ -968,7 +1052,7 @@ fn init_vk_and_check_no_errors(debug_mode: bool) -> Result<bool, Box<dyn std::er
             queue_family,
             *device_create_info,
             numbered_devices.swap_remove(selected_index),
-            debug_mode,
+            verbose,
         )?;
     } else {
         return Err("Test cancelled, no device selected".into());
@@ -984,7 +1068,8 @@ fn init_vk_and_check_no_errors(debug_mode: bool) -> Result<bool, Box<dyn std::er
 }
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
-    let debug_mode = match std::env::args_os().next() {
+    let mut verbose = cfg!(feature = "verbose");
+    verbose |= match std::env::args_os().next() {
         Some(argv0) => match std::path::PathBuf::from(argv0)
             .file_stem()
             .map(std::ffi::OsStr::to_str)
@@ -1004,7 +1089,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         env!("CARGO_PKG_VERSION")
     );
     drop(color_setter);
-    let result = init_vk_and_check_no_errors(debug_mode);
+    let result = init_vk_and_check_no_errors(verbose);
     let mut key_reader = input::Reader::default();
     if let Ok(passed) = result {
         key_reader.set_pass_fail_accent_color(passed);
