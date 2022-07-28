@@ -289,6 +289,7 @@ impl IOBuf {
 trait MapErrStr {
     type ValueType;
     fn err_as_str(self) -> Result<Self::ValueType, Box<dyn std::error::Error>>;
+    fn err_as_str_context(self, context: &str) -> Result<Self::ValueType, Box<dyn std::error::Error>>;
 }
 
 impl<T> MapErrStr for erupt::utils::VulkanResult<T> {
@@ -298,6 +299,14 @@ impl<T> MapErrStr for erupt::utils::VulkanResult<T> {
         result.map_err(|res| {
             let msg =
                 res.to_string() + " while getting " + std::any::type_name::<Self::ValueType>();
+            msg.to_string().into()
+        })
+    }
+    fn err_as_str_context(self, context: &str) -> Result<Self::ValueType, Box<dyn std::error::Error>> {
+        let result = self.result();
+        result.map_err(|res| {
+            let msg =
+                res.to_string() + " while getting " + std::any::type_name::<Self::ValueType>() + "in context" + context;
             msg.to_string().into()
         })
     }
@@ -460,7 +469,7 @@ fn test_device(
                 .err_as_str()?,
         )
     };
-    unsafe { device.bind_buffer_memory(io_buffer, io_memory, 0) }.err_as_str()?;
+    unsafe { device.bind_buffer_memory(io_buffer, io_memory, 0) }.err_as_str_context("bind_buffer_memory")?;
 
     let min_wanted_allocation = TEST_DATA_KEEP_FREE;
     let (test_mem_reqs, test_buffer_create_info) =
@@ -633,7 +642,7 @@ fn test_device(
                                         );
                                         device
                                             .begin_command_buffer(cmd_buf, &vk::CommandBufferBeginInfo::default())
-                                            .err_as_str()?;
+                                            .err_as_str_context("begin_command_buffer")?;
                                         device.cmd_bind_pipeline(cmd_buf, vk::PipelineBindPoint::COMPUTE, pipeline);
                                         device.cmd_bind_descriptor_sets(
                                             cmd_buf,
@@ -649,14 +658,14 @@ fn test_device(
                                             1,
                                             1,
                                         );
-                                        device.end_command_buffer(cmd_buf).err_as_str()?;
+                                        device.end_command_buffer(cmd_buf).err_as_str_context("end_command_buffer")?;
                                         device
                                             .queue_submit(queue, submit_info, fence)
-                                            .err_as_str()?;
+                                            .err_as_str_context("queue_submit")?;
                                         device
                                             .wait_for_fences(&[fence], true, u64::MAX)
-                                            .err_as_str()?;
-                                        device.reset_fences(&[fence]).err_as_str()?;
+                                            .err_as_str_context("wait_for_fences")?;
+                                        device.reset_fences(&[fence]).err_as_str_context("reset_fences")?;
                                         Ok(())
                                     }
                                 };
@@ -1075,7 +1084,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             .map(std::ffi::OsStr::to_str)
             .flatten()
         {
-            Some(file_stem) => file_stem.to_ascii_lowercase().contains("debug"),
+            Some(file_stem) => file_stem.to_ascii_lowercase().contains("verbose"),
             _ => false,
         },
         _ => false,
