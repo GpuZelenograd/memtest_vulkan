@@ -1,6 +1,26 @@
-use std::sync::atomic::{AtomicI32, Ordering::SeqCst};
+use std::sync::atomic::{AtomicI32, AtomicU8, Ordering::SeqCst};
 
 static CLOSE_REQUESTED: AtomicI32 = AtomicI32::new(0); //1 is resettable close request, 2 is non-resettable
+pub mod app_status {
+    pub const SIGNATURE: u8 = 0b01000000u8;
+    pub const SIGNATURE_MASK: u8 = 0b11100000u8;
+    pub const INITED_OK: u8 = 0b00001u8;
+    pub const RUNTIME_ERRORS: u8 = 0b00010u8;
+}
+
+static APP_STATUS: AtomicU8 = AtomicU8::new(app_status::SIGNATURE); //1 is resettable close request, 2 is non-resettable
+
+pub fn raise_status_bit(bit: u8) {
+    APP_STATUS.fetch_or(bit, SeqCst);
+}
+
+pub fn fetch_status() -> u8 {
+    return APP_STATUS.load(SeqCst) & !app_status::SIGNATURE_MASK;
+}
+
+pub fn check_any_bits_set(value: u8, bits: u8) -> bool {
+    return (value & bits) != 0;
+}
 
 pub fn close_requested() -> bool {
     match CLOSE_REQUESTED.compare_exchange(1, 0, SeqCst, SeqCst) {

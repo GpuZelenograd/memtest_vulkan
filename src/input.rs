@@ -64,7 +64,7 @@ impl Reader {
             _ => Ok(ReaderEvent::Timeout),
         }
     }
-    pub fn set_pass_fail_accent_color(&mut self, passed: bool) {
+    pub fn set_pass_fail_accent_color(&mut self, failed: bool) {
         if crate::close::close_requested() {
             //color methods not available while closing on windows
             return;
@@ -75,9 +75,9 @@ impl Reader {
             return;
         }
         let terminal = self.terminal.as_ref().unwrap();
-        let _ = terminal.set_fg(Some(match passed {
-            true => Color::Green,
-            false => Color::Red,
+        let _ = terminal.set_fg(Some(match failed {
+            false => Color::Green,
+            true => Color::Red,
         }));
     }
 

@@ -15,7 +15,20 @@ use std::{
     mem, time,
 };
 
+struct CStrStaticPtr([*const std::os::raw::c_char; 1]);
+
+impl core::ops::Deref for CStrStaticPtr {
+    type Target = [*const std::os::raw::c_char; 1];
+
+    fn deref(&self) -> &Self::Target {
+        &self.0
+    }
+}
+unsafe impl Sync for CStrStaticPtr {}
+
 const LAYER_KHRONOS_VALIDATION: &CStr = c_str!("VK_LAYER_KHRONOS_validation");
+static LAYER_KHRONOS_VALIDATION_ARRAY: CStrStaticPtr =
+    CStrStaticPtr([LAYER_KHRONOS_VALIDATION.as_ptr()]);
 const GB: f32 = (1024 * 1024 * 1024) as f32;
 const READ_SHADER: &[u32] = memtest_vulkan_build::compiled_vk_compute_spirv!(
     r#"
@@ -129,6 +142,12 @@ const ELEMENT_BIT_SIZE: usize = (ELEMENT_SIZE * 8) as usize;
 const TEST_WINDOW_SIZE_GRANULARITY: i64 = VEC_SIZE as i64 * WG_SIZE * ELEMENT_SIZE * 0x20000 as i64;
 const TEST_WINDOW_MAX_SIZE: i64 = 4 * 1024 * 1024 * 1024 - TEST_WINDOW_SIZE_GRANULARITY;
 const TEST_DATA_KEEP_FREE: i64 = 400 * 1024 * 1024;
+
+struct ComputePipelines {
+    read: vk::Pipeline,
+    write: vk::Pipeline,
+    emulate_write_bugs: vk::Pipeline,
+}
 
 #[derive(Default)]
 struct U64HexDebug(i64);
@@ -289,7 +308,10 @@ impl IOBuf {
 trait MapErrStr {
     type ValueType;
     fn err_as_str(self) -> Result<Self::ValueType, Box<dyn std::error::Error>>;
-    fn err_as_str_context(self, context: &str) -> Result<Self::ValueType, Box<dyn std::error::Error>>;
+    fn err_as_str_context(
+        self,
+        context: &str,
+    ) -> Result<Self::ValueType, Box<dyn std::error::Error>>;
 }
 
 impl<T> MapErrStr for erupt::utils::VulkanResult<T> {
@@ -302,11 +324,17 @@ impl<T> MapErrStr for erupt::utils::VulkanResult<T> {
             msg.to_string().into()
         })
     }
-    fn err_as_str_context(self, context: &str) -> Result<Self::ValueType, Box<dyn std::error::Error>> {
+    fn err_as_str_context(
+        self,
+        context: &str,
+    ) -> Result<Self::ValueType, Box<dyn std::error::Error>> {
         let result = self.result();
         result.map_err(|res| {
-            let msg =
-                res.to_string() + " while getting " + std::any::type_name::<Self::ValueType>() + " in context " + context;
+            let msg = res.to_string()
+                + " while getting "
+                + std::any::type_name::<Self::ValueType>()
+                + " in context "
+                + context;
             msg.to_string().into()
         })
     }
@@ -357,14 +385,12 @@ fn free_test_mem_and_buffers(
     }
 }
 
-fn test_device(
+fn prepare_and_test_device(
     instance: &erupt::InstanceLoader,
-    physical_device: vk::PhysicalDevice,
-    queue_family_index: u32,
-    device_create_info: vk::DeviceCreateInfo,
-    name: String,
+    selected: NamedComputeDevice,
+    device_create_info_no_queue: vk::DeviceCreateInfo,
     verbose: bool,
-) -> Result<bool, Box<dyn std::error::Error>> {
+) -> Result<(), Box<dyn std::error::Error>> {
     const MAX_LOG_SIZE: u64 = 50 * 1024 * 1024;
     //log is put in current directory. This is intentional - run from other dir to use another log
     let mut log_dupler = output::LogDupler::new(
@@ -372,9 +398,16 @@ fn test_device(
         Some("memtest_vulkan.log".into()),
         MAX_LOG_SIZE,
     );
-    writeln!(log_dupler, "Testing {}", name)?;
-    let device = unsafe { DeviceLoader::new(&instance, physical_device, &device_create_info) }?;
-    let queue = unsafe { device.get_device_queue(queue_family_index, 0) };
+
+    writeln!(log_dupler, "Testing {}", selected.label)?;
+
+    let queue_create_info = vec![vk::DeviceQueueCreateInfoBuilder::new()
+        .queue_family_index(selected.queue_family_index)
+        .queue_priorities(&[1.0])];
+
+    let device_create_info = *device_create_info_no_queue
+        .into_builder()
+        .queue_create_infos(&queue_create_info);
 
     let mut budget_structure: ext_memory_budget::PhysicalDeviceMemoryBudgetPropertiesEXT =
         Default::default();
@@ -382,11 +415,130 @@ fn test_device(
     budget_request.p_next = &mut budget_structure
         as *mut ext_memory_budget::PhysicalDeviceMemoryBudgetPropertiesEXT
         as *mut c_void;
-    let memory_props = unsafe {
-        instance.get_physical_device_memory_properties2(physical_device, Some(budget_request))
-    }
-    .memory_properties;
+    let memory_props2 = unsafe {
+        instance
+            .get_physical_device_memory_properties2(selected.physical_device, Some(budget_request))
+    };
+    let device =
+        unsafe { DeviceLoader::new(&instance, selected.physical_device, &device_create_info) }?;
+    let queue = unsafe { device.get_device_queue(selected.queue_family_index, 0) };
 
+    let cmd_pool_info = vk::CommandPoolCreateInfoBuilder::new()
+        .queue_family_index(selected.queue_family_index)
+        .flags(vk::CommandPoolCreateFlags::RESET_COMMAND_BUFFER);
+    let cmd_pool = unsafe { device.create_command_pool(&cmd_pool_info, None) }.err_as_str()?;
+
+    let cmd_buf_info = vk::CommandBufferAllocateInfoBuilder::new()
+        .command_pool(cmd_pool)
+        .command_buffer_count(1)
+        .level(vk::CommandBufferLevel::PRIMARY);
+    let cmd_bufs = unsafe { device.allocate_command_buffers(&cmd_buf_info) }.err_as_str()?;
+
+    let desc_pool_sizes = &[vk::DescriptorPoolSizeBuilder::new()
+        .descriptor_count(2)
+        ._type(vk::DescriptorType::STORAGE_BUFFER)];
+    let desc_pool_info = vk::DescriptorPoolCreateInfoBuilder::new()
+        .pool_sizes(desc_pool_sizes)
+        .max_sets(1);
+    let desc_pool = unsafe { device.create_descriptor_pool(&desc_pool_info, None) }.err_as_str()?;
+
+    let desc_layout_bindings = &[
+        vk::DescriptorSetLayoutBindingBuilder::new()
+            .binding(0)
+            .descriptor_count(1)
+            .descriptor_type(vk::DescriptorType::STORAGE_BUFFER)
+            .stage_flags(vk::ShaderStageFlags::COMPUTE),
+        vk::DescriptorSetLayoutBindingBuilder::new()
+            .binding(1)
+            .descriptor_count(1)
+            .descriptor_type(vk::DescriptorType::STORAGE_BUFFER)
+            .stage_flags(vk::ShaderStageFlags::COMPUTE),
+    ];
+    let desc_layout_info =
+        vk::DescriptorSetLayoutCreateInfoBuilder::new().bindings(desc_layout_bindings);
+    let desc_layouts =
+        [unsafe { device.create_descriptor_set_layout(&desc_layout_info, None) }.err_as_str()?];
+
+    let desc_info = vk::DescriptorSetAllocateInfoBuilder::new()
+        .descriptor_pool(desc_pool)
+        .set_layouts(&desc_layouts);
+    let desc_sets = unsafe { device.allocate_descriptor_sets(&desc_info) }.err_as_str()?;
+
+    let pipeline_layout_info =
+        vk::PipelineLayoutCreateInfoBuilder::new().set_layouts(&desc_layouts);
+    let pipeline_layout =
+        unsafe { device.create_pipeline_layout(&pipeline_layout_info, None) }.err_as_str()?;
+
+    let spv_code = Vec::from(READ_SHADER);
+    let create_info = vk::ShaderModuleCreateInfoBuilder::new().code(&spv_code);
+    let shader_mod = unsafe { device.create_shader_module(&create_info, None) }.err_as_str()?;
+
+    let pipeline_infos = [
+        c_str!("read"),
+        c_str!("write"),
+        c_str!("emulate_write_bugs"),
+    ]
+    .map(|name| {
+        let shader_stage = vk::PipelineShaderStageCreateInfoBuilder::new()
+            .stage(vk::ShaderStageFlagBits::COMPUTE)
+            .module(shader_mod)
+            .name(name);
+        vk::ComputePipelineCreateInfoBuilder::new()
+            .layout(pipeline_layout)
+            .stage(*shader_stage)
+    });
+
+    let pipelines =
+        unsafe { device.create_compute_pipelines(Default::default(), &pipeline_infos, None) }
+            .err_as_str()?;
+    let pipelines = ComputePipelines {
+        read: pipelines[0],
+        write: pipelines[1],
+        emulate_write_bugs: pipelines[2],
+    };
+
+    let result = test_device(
+        &device,
+        queue,
+        cmd_bufs,
+        desc_sets,
+        &pipeline_layout,
+        &pipelines,
+        log_dupler,
+        memory_props2.memory_properties,
+        budget_structure,
+        verbose,
+    );
+    // Cleanup & Destruction
+    unsafe {
+        device.destroy_pipeline(pipelines.read, None);
+        device.destroy_pipeline(pipelines.write, None);
+        device.destroy_pipeline(pipelines.emulate_write_bugs, None);
+
+        device.destroy_pipeline_layout(pipeline_layout, None);
+
+        device.destroy_shader_module(shader_mod, None);
+
+        device.destroy_descriptor_set_layout(desc_layouts[0], None);
+        device.destroy_descriptor_pool(desc_pool, None);
+        device.destroy_command_pool(cmd_pool, None);
+        device.destroy_device(None);
+    }
+    result
+}
+
+fn test_device<Writer: std::io::Write>(
+    device: &erupt::DeviceLoader,
+    queue: vk::Queue,
+    cmd_bufs: erupt::SmallVec<vk::CommandBuffer>,
+    desc_sets: erupt::SmallVec<vk::DescriptorSet>,
+    pipeline_layout: &vk::PipelineLayout,
+    pipelines: &ComputePipelines,
+    mut log_dupler: output::LogDupler<Writer>,
+    memory_props: vk::PhysicalDeviceMemoryProperties,
+    budget_structure: ext_memory_budget::PhysicalDeviceMemoryBudgetPropertiesEXT,
+    verbose: bool,
+) -> Result<(), Box<dyn std::error::Error>> {
     let mut allocation_size = 0i64;
     if verbose {
         for i in 0..memory_props.memory_type_count as usize {
@@ -469,7 +621,8 @@ fn test_device(
                 .err_as_str()?,
         )
     };
-    unsafe { device.bind_buffer_memory(io_buffer, io_memory, 0) }.err_as_str_context("bind_buffer_memory")?;
+    unsafe { device.bind_buffer_memory(io_buffer, io_memory, 0) }
+        .err_as_str_context("bind_buffer_memory")?;
 
     let min_wanted_allocation = TEST_DATA_KEEP_FREE;
     let (test_mem_reqs, test_buffer_create_info) =
@@ -489,41 +642,10 @@ fn test_device(
         })
         .ok_or("DEVICE_LOCAL test memory type not available")?;
 
-    let desc_pool_sizes = &[vk::DescriptorPoolSizeBuilder::new()
-        .descriptor_count(2)
-        ._type(vk::DescriptorType::STORAGE_BUFFER)];
-    let desc_pool_info = vk::DescriptorPoolCreateInfoBuilder::new()
-        .pool_sizes(desc_pool_sizes)
-        .max_sets(1);
-    let desc_pool = unsafe { device.create_descriptor_pool(&desc_pool_info, None) }.err_as_str()?;
-
-    let desc_layout_bindings = &[
-        vk::DescriptorSetLayoutBindingBuilder::new()
-            .binding(0)
-            .descriptor_count(1)
-            .descriptor_type(vk::DescriptorType::STORAGE_BUFFER)
-            .stage_flags(vk::ShaderStageFlags::COMPUTE),
-        vk::DescriptorSetLayoutBindingBuilder::new()
-            .binding(1)
-            .descriptor_count(1)
-            .descriptor_type(vk::DescriptorType::STORAGE_BUFFER)
-            .stage_flags(vk::ShaderStageFlags::COMPUTE),
-    ];
-    let desc_layout_info =
-        vk::DescriptorSetLayoutCreateInfoBuilder::new().bindings(desc_layout_bindings);
-    let desc_layout =
-        unsafe { device.create_descriptor_set_layout(&desc_layout_info, None) }.err_as_str()?;
-
-    let desc_layouts = &[desc_layout];
-    let desc_info = vk::DescriptorSetAllocateInfoBuilder::new()
-        .descriptor_pool(desc_pool)
-        .set_layouts(desc_layouts);
-    let desc_set = unsafe { device.allocate_descriptor_sets(&desc_info) }.err_as_str()?[0];
-
     unsafe {
         device.update_descriptor_sets(
             &[vk::WriteDescriptorSetBuilder::new()
-                .dst_set(desc_set)
+                .dst_set(desc_sets[0])
                 .dst_binding(0)
                 .descriptor_type(vk::DescriptorType::STORAGE_BUFFER)
                 .buffer_info(&[vk::DescriptorBufferInfoBuilder::new()
@@ -534,51 +656,10 @@ fn test_device(
         );
     }
 
-    let pipeline_layout_desc_layouts = &[desc_layout];
-    let pipeline_layout_info =
-        vk::PipelineLayoutCreateInfoBuilder::new().set_layouts(pipeline_layout_desc_layouts);
-    let pipeline_layout =
-        unsafe { device.create_pipeline_layout(&pipeline_layout_info, None) }.err_as_str()?;
+    let fence =
+        unsafe { device.create_fence(&vk::FenceCreateInfo::default(), None) }.err_as_str()?;
 
-    let spv_code = Vec::from(READ_SHADER);
-    let create_info = vk::ShaderModuleCreateInfoBuilder::new().code(&spv_code);
-    let shader_mod = unsafe { device.create_shader_module(&create_info, None) }.err_as_str()?;
-
-    let pipeline_infos = [
-        c_str!("read"),
-        c_str!("write"),
-        c_str!("emulate_write_bugs"),
-    ]
-    .map(|name| {
-        let shader_stage = vk::PipelineShaderStageCreateInfoBuilder::new()
-            .stage(vk::ShaderStageFlagBits::COMPUTE)
-            .module(shader_mod)
-            .name(name);
-        vk::ComputePipelineCreateInfoBuilder::new()
-            .layout(pipeline_layout)
-            .stage(*shader_stage)
-    });
-
-    let pipelines_r_w_emul =
-        unsafe { device.create_compute_pipelines(Default::default(), &pipeline_infos, None) }
-            .err_as_str()?;
-
-    let cmd_pool_info = vk::CommandPoolCreateInfoBuilder::new()
-        .queue_family_index(queue_family_index)
-        .flags(vk::CommandPoolCreateFlags::RESET_COMMAND_BUFFER);
-    let cmd_pool = unsafe { device.create_command_pool(&cmd_pool_info, None) }.err_as_str()?;
-
-    let cmd_buf_info = vk::CommandBufferAllocateInfoBuilder::new()
-        .command_pool(cmd_pool)
-        .command_buffer_count(1)
-        .level(vk::CommandBufferLevel::PRIMARY);
-    let cmd_buf = unsafe { device.allocate_command_buffers(&cmd_buf_info) }.err_as_str()?[0];
-
-    let fence_info = vk::FenceCreateInfoBuilder::new();
-    let fence = unsafe { device.create_fence(&fence_info, None) }.err_as_str()?;
-
-    let cmd_bufs = &[cmd_buf];
-    let submit_info = &[vk::SubmitInfoBuilder::new().command_buffers(cmd_bufs)];
+    let submit_info = &[vk::SubmitInfoBuilder::new().command_buffers(&cmd_bufs)];
     //all preparations except huge buffer allocation done. Now allocate huge buffer as a last step to minize chance of allocation failure for small structures
 
     let mut test_memory = None;
@@ -631,7 +712,7 @@ fn test_device(
                                     unsafe {
                                         device.update_descriptor_sets(
                                             &[vk::WriteDescriptorSetBuilder::new()
-                                                .dst_set(desc_set)
+                                                .dst_set(desc_sets[0])
                                                 .dst_binding(1)
                                                 .descriptor_type(vk::DescriptorType::STORAGE_BUFFER)
                                                 .buffer_info(&[vk::DescriptorBufferInfoBuilder::new()
@@ -640,6 +721,7 @@ fn test_device(
                                                     .range(test_window_size as u64)])],
                                             &[],
                                         );
+                                        let cmd_buf = cmd_bufs[0];
                                         device
                                             .begin_command_buffer(cmd_buf, &vk::CommandBufferBeginInfo::default())
                                             .err_as_str_context("begin_command_buffer")?;
@@ -647,9 +729,9 @@ fn test_device(
                                         device.cmd_bind_descriptor_sets(
                                             cmd_buf,
                                             vk::PipelineBindPoint::COMPUTE,
-                                            pipeline_layout,
+                                            *pipeline_layout,
                                             0,
-                                            &[desc_set],
+                                            &desc_sets,
                                             &[],
                                         );
                                         device.cmd_dispatch(
@@ -674,14 +756,14 @@ fn test_device(
                                 let mut overall_exec_result = Ok(());
                                 'window: for window_idx in 0..test_window_count {
                                     let test_offset = test_window_size * window_idx;
-                                    match execute_wait_queue(test_offset, pipelines_r_w_emul[1]) {
+                                    match execute_wait_queue(test_offset, pipelines.write) {
                                         Err(e) => {
                                             overall_exec_result = Err(e);
                                             break 'window;
                                         }
                                         Ok(()) => {}
                                     }
-                                    match execute_wait_queue(test_offset, pipelines_r_w_emul[0]) {
+                                    match execute_wait_queue(test_offset, pipelines.read) {
                                         Err(e) => {
                                             overall_exec_result = Err(e);
                                             break 'window;
@@ -730,7 +812,6 @@ fn test_device(
     let mut next_report_duration = time::Duration::from_secs(0);
     let mut start = time::Instant::now();
     let mut buffer_in = IOBuf::for_initial_iteration();
-    let mut no_errors = true;
     for iteration in 1..=iter_count {
         unsafe { std::ptr::write(mapped, buffer_in) }
         for window_idx in 1..test_window_count {
@@ -738,7 +819,7 @@ fn test_device(
             unsafe {
                 (*mapped).calc_param = buffer_in.calc_param + window_idx as u32 * 0x81 as u32;
             }
-            execute_wait_queue(test_offset, pipelines_r_w_emul[1])?; //use 2 for error simulation
+            execute_wait_queue(test_offset, pipelines.write)?; //use emulate_write_bugs for error simulation
             written_bytes += test_window_size;
         }
         buffer_in.set_calc_param_for_starting_window();
@@ -757,7 +838,7 @@ fn test_device(
                 );
             }
             let test_offset = test_window_size * window_idx;
-            execute_wait_queue(test_offset, pipelines_r_w_emul[0])?;
+            execute_wait_queue(test_offset, pipelines.read)?;
             read_bytes += test_window_size;
             {
                 unsafe {
@@ -766,7 +847,7 @@ fn test_device(
                 if let Some((error_range, total_errors)) =
                     last_buffer_out.get_error_addresses_and_count(test_offset)
                 {
-                    no_errors = false;
+                    close::raise_status_bit(close::app_status::RUNTIME_ERRORS);
                     let test_elems = test_window_size / ELEMENT_SIZE;
                     write!(log_dupler,
                         "Error found. Mode {}, total errors 0x{:X} out of 0x{:X} ({:2.8}%)\nErrors address range: {:?}",
@@ -811,6 +892,7 @@ fn test_device(
                 next_report_duration = second1 * 100; //later reports every 100 seconds
             }
             start = time::Instant::now();
+            close::raise_status_bit(close::app_status::INITED_OK);
         }
         if stop_testing {
             writeln!(log_dupler, "received user interruption, testing stopped")?;
@@ -828,22 +910,28 @@ fn test_device(
         device.unmap_memory(io_memory);
         device.free_memory(io_memory, None);
 
-        for pipeline in pipelines_r_w_emul {
-            device.destroy_pipeline(pipeline, None);
-        }
-        device.destroy_pipeline_layout(pipeline_layout, None);
-        device.destroy_command_pool(cmd_pool, None);
         device.destroy_fence(fence, None);
-        device.destroy_descriptor_set_layout(desc_layout, None);
-        device.destroy_descriptor_pool(desc_pool, None);
-        device.destroy_shader_module(shader_mod, None);
-        device.destroy_device(None);
     }
-
-    Ok(no_errors)
+    Ok(())
 }
 
-fn init_vk_and_check_no_errors(verbose: bool) -> Result<bool, Box<dyn std::error::Error>> {
+struct NamedComputeDevice {
+    label: String,
+    physical_device: vk::PhysicalDevice,
+    queue_family_index: u32,
+}
+
+fn load_instance(
+    verbose: bool,
+) -> Result<
+    (
+        erupt::InstanceLoader,
+        erupt::EntryLoader,
+        vk::DebugUtilsMessengerEXT,
+        vk::DeviceCreateInfo,
+    ),
+    Box<dyn std::error::Error>,
+> {
     let entry = EntryLoader::new()?;
     if verbose {
         println!(
@@ -853,25 +941,21 @@ fn init_vk_and_check_no_errors(verbose: bool) -> Result<bool, Box<dyn std::error
             vk::api_version_patch(entry.instance_version())
         );
     }
-    println!("To finish testing use Ctrl+C");
     println!();
 
     let mut instance_extensions = Vec::new();
-    let mut instance_layers = Vec::new();
-    let mut device_layers = Vec::new();
 
     instance_extensions.push(ext_debug_utils::EXT_DEBUG_UTILS_EXTENSION_NAME);
-    instance_layers.push(LAYER_KHRONOS_VALIDATION.as_ptr());
 
     let app_info = vk::ApplicationInfoBuilder::new().api_version(vk::API_VERSION_1_1);
     let instance_create_info = vk::InstanceCreateInfoBuilder::new()
         .enabled_extension_names(&instance_extensions)
-        .enabled_layer_names(&instance_layers)
+        .enabled_layer_names(&*LAYER_KHRONOS_VALIDATION_ARRAY)
         .application_info(&app_info);
 
-    let mut messenger = Default::default();
-    let instance = unsafe { InstanceLoader::new(&entry, &instance_create_info) }
-        .map(|instance| {
+    let mut messenger = vk::DebugUtilsMessengerEXT::null();
+    match unsafe { InstanceLoader::new(&entry, &instance_create_info) } {
+        Ok(instance_with_validation) => {
             let mut severity = ext_debug_utils::DebugUtilsMessageSeverityFlagsEXT::WARNING_EXT
                 | ext_debug_utils::DebugUtilsMessageSeverityFlagsEXT::ERROR_EXT;
             if verbose {
@@ -883,21 +967,64 @@ fn init_vk_and_check_no_errors(verbose: bool) -> Result<bool, Box<dyn std::error
                 .message_severity(severity)
                 .message_type(ext_debug_utils::DebugUtilsMessageTypeFlagsEXT::all())
                 .pfn_user_callback(Some(debug_callback));
-            messenger = unsafe { instance.create_debug_utils_messenger_ext(&create_info, None) }
-                .result()
-                .unwrap_or_default();
-            device_layers.push(LAYER_KHRONOS_VALIDATION.as_ptr());
-            instance
-        })
-        .or_else(|_| {
-            unsafe {
-                InstanceLoader::new(
-                    &entry,
-                    &vk::InstanceCreateInfoBuilder::new().application_info(&app_info),
-                )
-            } //fallback creation without validation and extensions
-        })?;
+            messenger = unsafe {
+                instance_with_validation.create_debug_utils_messenger_ext(&create_info, None)
+            }
+            .result()
+            .unwrap_or_default();
+            return Ok((
+                instance_with_validation,
+                entry,
+                messenger,
+                *vk::DeviceCreateInfoBuilder::new()
+                    .enabled_layer_names(&*LAYER_KHRONOS_VALIDATION_ARRAY),
+            ));
+        }
+        Err(e) => {
+            if verbose {
+                println!("Not using validation layers due to {e}");
+            }
+        }
+    }
+    //fallback creation without validation and extensions
 
+    let instance = unsafe {
+        InstanceLoader::new(
+            &entry,
+            &vk::InstanceCreateInfoBuilder::new().application_info(&app_info),
+        )
+    }?;
+    Ok((
+        instance,
+        entry,
+        messenger,
+        *vk::DeviceCreateInfoBuilder::new(),
+    ))
+}
+//InstanceLoader must be dropped after EntryLoader
+struct LoadedDevices(
+    erupt::InstanceLoader,
+    erupt::EntryLoader,
+    vk::DebugUtilsMessengerEXT,
+    vk::DeviceCreateInfo,
+    Vec<NamedComputeDevice>,
+);
+
+impl Drop for LoadedDevices {
+    fn drop(&mut self) {
+        let LoadedDevices(instance, _, messenger, _, _) = self;
+        unsafe {
+            if !messenger.is_null() {
+                instance.destroy_debug_utils_messenger_ext(*messenger, None);
+            }
+            instance.destroy_instance(None);
+        }
+    }
+}
+fn list_devices_ordered_labaled_from_1(
+    verbose: bool,
+) -> Result<LoadedDevices, Box<dyn std::error::Error>> {
+    let (instance, entry, messenger, device_create_info) = load_instance(verbose)?;
     let mut compute_capable_devices: Vec<_> = unsafe { instance.enumerate_physical_devices(None) }
         .err_as_str()?
         .into_iter()
@@ -954,7 +1081,7 @@ fn init_vk_and_check_no_errors(verbose: bool) -> Result<bool, Box<dyn std::error
             _ => (2, negative_bus_for_reverse_ordering),
         }
     });
-    let mut numbered_devices = Vec::new();
+    let mut numbered_devices: Vec<NamedComputeDevice> = Vec::new();
     for (i, d) in compute_capable_devices.iter().enumerate() {
         let props = d.2;
         let pci_props = d.4;
@@ -968,24 +1095,34 @@ fn init_vk_and_check_no_errors(verbose: bool) -> Result<bool, Box<dyn std::error
         } else {
             String::new()
         };
-        numbered_devices.push(std::format!(
-            "{}: Bus=0x{:02X}:{:02X} DevId=0x{:04X} {api_info}  {}GB {}",
-            i + 1,
-            pci_props.pci_bus,
-            pci_props.pci_device,
-            props.device_id,
-            (d.3 as f32 / GB).ceil(),
-            unsafe {
-                CStr::from_ptr(props.device_name.as_ptr())
-                    .to_str()
-                    .unwrap_or("Invalid device_name")
-            },
-        ));
+        numbered_devices.push(NamedComputeDevice {
+            label: std::format!(
+                "{}: Bus=0x{:02X}:{:02X} DevId=0x{:04X} {api_info}  {}GB {}",
+                i + 1,
+                pci_props.pci_bus,
+                pci_props.pci_device,
+                props.device_id,
+                (d.3 as f32 / GB).ceil(),
+                unsafe {
+                    CStr::from_ptr(props.device_name.as_ptr())
+                        .to_str()
+                        .unwrap_or("Invalid device_name")
+                }
+            ),
+            physical_device: d.0,
+            queue_family_index: d.1,
+        });
     }
-    for desc in &numbered_devices {
-        println!("{desc}");
-    }
+    Ok(LoadedDevices(
+        instance,
+        entry,
+        messenger,
+        device_create_info,
+        numbered_devices,
+    ))
+}
 
+fn prompt_for_index(verbose: bool) -> Option<usize> {
     let mut device_test_index = Some(0usize);
     let prompt_start = time::Instant::now();
     let mut prompt_duration: Option<time::Duration> = Some(time::Duration::from_secs(10));
@@ -1010,14 +1147,14 @@ fn init_vk_and_check_no_errors(verbose: bool) -> Result<bool, Box<dyn std::error
                 prompt = &formatted_prompt;
             }
         }
-        match input_reader.input_digit_step(prompt, &time::Duration::from_millis(250))? {
-            input::ReaderEvent::Edited => prompt_duration = None,
-            input::ReaderEvent::Canceled => {
+        match input_reader.input_digit_step(prompt, &time::Duration::from_millis(250)) {
+            Ok(input::ReaderEvent::Edited) => prompt_duration = None,
+            Ok(input::ReaderEvent::Canceled) => {
                 println!("");
                 device_test_index = None;
                 break;
             }
-            input::ReaderEvent::Completed => {
+            Ok(input::ReaderEvent::Completed) => {
                 match input_reader.current_input.len()
                     == input_reader.current_input.matches('0').count()
                 {
@@ -1043,47 +1180,71 @@ fn init_vk_and_check_no_errors(verbose: bool) -> Result<bool, Box<dyn std::error
                 }
                 break;
             }
-            input::ReaderEvent::Timeout => {} //just redraw prompt
+            Ok(input::ReaderEvent::Timeout) => {} //just redraw prompt
+            Err(e) => {
+                //if input machinery doesnt work treate it as nothing was enetred
+                if verbose {
+                    println!("Input machinery failure: {e}");
+                }
+                break;
+            }
         }
     }
     drop(input_reader);
+    device_test_index
+}
+struct TestStatus {
+    external_exit_request: bool,
+    test_status: u8,
+}
+fn init_vk_and_check_errors(
+    mut loaded_devices: LoadedDevices,
+    device_test_index: &mut Option<usize>,
+    verbose: bool,
+) -> Result<(LoadedDevices, TestStatus), Box<dyn std::error::Error>> {
+    let LoadedDevices(instance, _, _, device_create_info, devices_labeled_from_1) =
+        &mut loaded_devices;
 
-    let no_errors;
-    if let Some(selected_index) = device_test_index {
-        let (physical_device, queue_family, _, _, _) = *(compute_capable_devices
-            .get(selected_index)
-            .ok_or("No device at given index")?);
+    if device_test_index.is_none() {
+        for desc in devices_labeled_from_1.iter() {
+            println!("{}", desc.label);
+        }
+        *device_test_index = prompt_for_index(verbose);
+    }
+    if let Some(selected_index) = *device_test_index {
+        if selected_index >= devices_labeled_from_1.len() {
+            return Err("No device at given index".into());
+        }
 
-        let queue_create_info = vec![vk::DeviceQueueCreateInfoBuilder::new()
-            .queue_family_index(queue_family)
-            .queue_priorities(&[1.0])];
+        let external_exit_request;
 
-        let device_create_info = vk::DeviceCreateInfoBuilder::new()
-            .queue_create_infos(&queue_create_info)
-            .enabled_layer_names(&device_layers);
-
-        no_errors = test_device(
+        match prepare_and_test_device(
             &instance,
-            physical_device,
-            queue_family,
+            devices_labeled_from_1.swap_remove(selected_index),
             *device_create_info,
-            numbered_devices.swap_remove(selected_index),
             verbose,
-        )?;
+        ) {
+            Ok(()) => {
+                external_exit_request = true;
+            }
+            Err(e) => {
+                println!("Runtime error: {e}");
+                external_exit_request = false;
+            }
+        }
+        Ok((
+            loaded_devices,
+            TestStatus {
+                external_exit_request: external_exit_request,
+                test_status: close::fetch_status(),
+            },
+        ))
     } else {
         return Err("Test cancelled, no device selected".into());
     }
-
-    unsafe {
-        if !messenger.is_null() {
-            instance.destroy_debug_utils_messenger_ext(messenger, None);
-        }
-        instance.destroy_instance(None);
-    }
-    Ok(no_errors)
 }
 
-fn main() -> Result<(), Box<dyn std::error::Error>> {
+fn start_displaying_and_check_verbose(interavtive: bool) -> bool {
     let mut verbose = cfg!(feature = "verbose");
     verbose |= match std::env::args_os().next() {
         Some(argv0) => match std::path::PathBuf::from(argv0)
@@ -1096,25 +1257,70 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         },
         _ => false,
     };
-    print!("https://github.com/GpuZelenograd/");
-    let _ = std::io::stdout().flush();
-    let mut color_setter = input::Reader::default();
-    color_setter.set_pass_fail_accent_color(true);
-    println!(
-        "memtest_vulkan v{} by GpuZelenograd",
-        env!("CARGO_PKG_VERSION")
-    );
-    drop(color_setter);
-    let result = init_vk_and_check_no_errors(verbose);
-    let mut key_reader = input::Reader::default();
-    if let Ok(passed) = result {
-        key_reader.set_pass_fail_accent_color(passed);
+    if interavtive {
+        print!("https://github.com/GpuZelenograd/");
+        let _ = std::io::stdout().flush();
+        let mut color_setter = input::Reader::default();
+        color_setter.set_pass_fail_accent_color(false);
+        println!(
+            "memtest_vulkan v{} by GpuZelenograd",
+            env!("CARGO_PKG_VERSION")
+        );
+        drop(color_setter);
+        println!("To finish testing use Ctrl+C");
     }
+    verbose
+}
+fn display_result(
+    result: &Result<(LoadedDevices, TestStatus), Box<dyn std::error::Error>>,
+    verbose: bool,
+) -> () {
+    if verbose {
+        if let Ok((_, some_status)) = result {
+            println!(
+                "exit was expected:{} exit status:{}",
+                some_status.external_exit_request, some_status.test_status
+            );
+        }
+    }
+    let mut key_reader = input::Reader::default();
     match result {
-        Ok(false) => println!("memtest_vulkan: memory/gpu ERRORS FOUND, testing finished."),
-        Ok(true) => println!("memtest_vulkan: no any errors, testing finished."),
-        Err(e) => println!("memtest_vulkan: testing not done: {}", e),
+        Err(e) => println!("memtest_vulkan: early exit during init: {e}"),
+        Ok((
+            _,
+            TestStatus {
+                external_exit_request: false,
+                test_status: status,
+            },
+        )) => {
+            if close::check_any_bits_set(*status, close::app_status::INITED_OK) {
+                println!("memtest_vulkan: First test passed, but THEN runtime error occured");
+            } else {
+                println!("memtest_vulkan: INIT OR FIRST testing failed due to runtime error");
+            }
+        }
+        Ok((
+            _,
+            TestStatus {
+                external_exit_request: true,
+                test_status: status,
+            },
+        )) => {
+            let has_errors = close::check_any_bits_set(*status, close::app_status::RUNTIME_ERRORS);
+            key_reader.set_pass_fail_accent_color(has_errors);
+            match has_errors {
+                true => println!("memtest_vulkan: memory/gpu ERRORS FOUND, testing finished."),
+                false => println!("memtest_vulkan: no any errors, testing finished."),
+            }
+        }
     }
     key_reader.wait_any_key();
-    Ok(())
+}
+fn main() -> () {
+    let mut device_test_index: Option<usize> = None;
+    let verbose = start_displaying_and_check_verbose(device_test_index.is_none());
+    let result = list_devices_ordered_labaled_from_1(verbose).and_then(|loaded_devices| {
+        init_vk_and_check_errors(loaded_devices, &mut device_test_index, verbose)
+    });
+    display_result(&result, verbose);
 }
