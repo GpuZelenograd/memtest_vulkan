@@ -306,7 +306,7 @@ impl<T> MapErrStr for erupt::utils::VulkanResult<T> {
         let result = self.result();
         result.map_err(|res| {
             let msg =
-                res.to_string() + " while getting " + std::any::type_name::<Self::ValueType>() + "in context" + context;
+                res.to_string() + " while getting " + std::any::type_name::<Self::ValueType>() + " in context " + context;
             msg.to_string().into()
         })
     }
@@ -675,6 +675,13 @@ fn test_device(
                                 'window: for window_idx in 0..test_window_count {
                                     let test_offset = test_window_size * window_idx;
                                     match execute_wait_queue(test_offset, pipelines_r_w_emul[1]) {
+                                        Err(e) => {
+                                            overall_exec_result = Err(e);
+                                            break 'window;
+                                        }
+                                        Ok(()) => {}
+                                    }
+                                    match execute_wait_queue(test_offset, pipelines_r_w_emul[0]) {
                                         Err(e) => {
                                             overall_exec_result = Err(e);
                                             break 'window;
