@@ -1,6 +1,8 @@
 use mortal::terminal::Key;
 use mortal::Event;
 
+use std::io::Write;
+
 #[derive(Default)]
 pub struct Reader {
     pub current_input: String,
@@ -81,11 +83,24 @@ impl Reader {
         }));
     }
 
-    pub fn wait_any_key(&mut self, timeout_instead_of_interactivity: bool) {
-        if timeout_instead_of_interactivity || crate::close::close_requested() {
+    pub fn wait_any_key(&mut self) {
+        if crate::close::close_requested() {
             //interaction methods not available while closing on windows
-            println!("(don't waiting for a keypress, since close requested)");
-            std::thread::sleep(std::time::Duration::from_secs(3));
+            let seconds_wait = 3;
+            let mut out = std::io::stdout();
+            if let Err(_) = write!(out, "Closing in {seconds_wait} seconds: ") {
+                return;
+            }
+            for i in (1..=seconds_wait).rev() {
+                if let Err(_) = write!(out, "{i}... ") {
+                    return;
+                }
+                if let Err(_) = out.flush() {
+                    return;
+                }
+                std::thread::sleep(std::time::Duration::from_secs(1));
+            }
+            println!();
             return;
         }
 

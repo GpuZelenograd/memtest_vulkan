@@ -142,6 +142,8 @@ const ELEMENT_BIT_SIZE: usize = (ELEMENT_SIZE * 8) as usize;
 const TEST_WINDOW_SIZE_GRANULARITY: i64 = VEC_SIZE as i64 * WG_SIZE * ELEMENT_SIZE * 0x20000 as i64;
 const TEST_WINDOW_MAX_SIZE: i64 = 4 * 1024 * 1024 * 1024 - TEST_WINDOW_SIZE_GRANULARITY;
 const TEST_DATA_KEEP_FREE: i64 = 400 * 1024 * 1024;
+const MIN_WANTED_ALLOCATION: i64 = TEST_DATA_KEEP_FREE;
+const ALLOCATION_TRY_STEP: i64 = TEST_DATA_KEEP_FREE;
 
 struct ComputePipelines {
     read: vk::Pipeline,
@@ -312,6 +314,11 @@ trait MapErrStr {
         self,
         context: &str,
     ) -> Result<Self::ValueType, Box<dyn std::error::Error>>;
+    fn err_retry_with_lower_memory(
+        self,
+        env: &ProcessEnv,
+        context: &str,
+    ) -> Result<Self::ValueType, Box<dyn std::error::Error>>;
 }
 
 impl<T> MapErrStr for erupt::utils::VulkanResult<T> {
@@ -330,6 +337,27 @@ impl<T> MapErrStr for erupt::utils::VulkanResult<T> {
     ) -> Result<Self::ValueType, Box<dyn std::error::Error>> {
         let result = self.result();
         result.map_err(|res| {
+            let msg = res.to_string()
+                + " while getting "
+                + std::any::type_name::<Self::ValueType>()
+                + " in context "
+                + context;
+            msg.to_string().into()
+        })
+    }
+    fn err_retry_with_lower_memory(
+        self,
+        env: &ProcessEnv,
+        context: &str,
+    ) -> Result<Self::ValueType, Box<dyn std::error::Error>> {
+        let result = self.result();
+        result.map_err(|res| {
+            if !env.interactive
+                && !close::check_any_bits_set(close::fetch_status(), close::app_status::INITED_OK)
+            {
+                //immediate exit in non-interactive during init to initiate try with lower memory
+                close::immediate_exit(true);
+            }
             let msg = res.to_string()
                 + " while getting "
                 + std::any::type_name::<Self::ValueType>()
@@ -384,22 +412,70 @@ fn free_test_mem_and_buffers(
         }
     }
 }
+fn try_fill_default_mem_budget(loaded_devices: &LoadedDevices, env: &mut ProcessEnv) {
+    let selected_index = env.effective_index();
+    let LoadedDevices(instance, _, _, _, devices_labeled_from_1) = &loaded_devices;
+
+    if env.max_test_bytes > 0 || selected_index >= devices_labeled_from_1.len() {
+        return;
+    }
+
+    let mut budget_structure: ext_memory_budget::PhysicalDeviceMemoryBudgetPropertiesEXT =
+        Default::default();
+
+    let mut budget_request = *vk::PhysicalDeviceMemoryProperties2Builder::new();
+    budget_request.p_next = &mut budget_structure
+        as *mut ext_memory_budget::PhysicalDeviceMemoryBudgetPropertiesEXT
+        as *mut c_void;
+    let memory_props2 = unsafe {
+        instance.get_physical_device_memory_properties2(
+            devices_labeled_from_1[selected_index].physical_device,
+            Some(budget_request),
+        )
+    };
+    let memory_props = memory_props2.memory_properties;
+    for i in 0..memory_props.memory_heap_count as usize {
+        if env.verbose {
+            println!(
+                "heap size {:4.1}GB budget {:4.1}GB usage {:4.1}GB flags={:#?}",
+                memory_props.memory_heaps[i].size as f32 / GB,
+                budget_structure.heap_budget[i] as f32 / GB,
+                budget_structure.heap_usage[i] as f32 / GB,
+                memory_props.memory_heaps[i].flags,
+            )
+        }
+        if !memory_props.memory_heaps[i]
+            .flags
+            .contains(vk::MemoryHeapFlags::DEVICE_LOCAL)
+        {
+            continue;
+        }
+        let mut heap_free = memory_props.memory_heaps[i].size as i64;
+        let usage = budget_structure.heap_usage[i] as i64;
+        if usage > 0 && usage < heap_free {
+            heap_free -= usage;
+        }
+        let budget = budget_structure.heap_budget[i] as i64;
+        if budget > 0 {
+            heap_free = min(heap_free, budget);
+        }
+        env.max_test_bytes = max(env.max_test_bytes, heap_free - TEST_DATA_KEEP_FREE);
+    }
+}
 
 fn prepare_and_test_device(
     instance: &erupt::InstanceLoader,
     selected: NamedComputeDevice,
     device_create_info_no_queue: vk::DeviceCreateInfo,
-    verbose: bool,
+    env: &ProcessEnv,
 ) -> Result<(), Box<dyn std::error::Error>> {
     const MAX_LOG_SIZE: u64 = 50 * 1024 * 1024;
     //log is put in current directory. This is intentional - run from other dir to use another log
-    let mut log_dupler = output::LogDupler::new(
+    let log_dupler = output::LogDupler::new(
         std::io::stdout(),
         Some("memtest_vulkan.log".into()),
         MAX_LOG_SIZE,
     );
-
-    writeln!(log_dupler, "Testing {}", selected.label)?;
 
     let queue_create_info = vec![vk::DeviceQueueCreateInfoBuilder::new()
         .queue_family_index(selected.queue_family_index)
@@ -409,16 +485,8 @@ fn prepare_and_test_device(
         .into_builder()
         .queue_create_infos(&queue_create_info);
 
-    let mut budget_structure: ext_memory_budget::PhysicalDeviceMemoryBudgetPropertiesEXT =
-        Default::default();
-    let mut budget_request = *vk::PhysicalDeviceMemoryProperties2Builder::new();
-    budget_request.p_next = &mut budget_structure
-        as *mut ext_memory_budget::PhysicalDeviceMemoryBudgetPropertiesEXT
-        as *mut c_void;
-    let memory_props2 = unsafe {
-        instance
-            .get_physical_device_memory_properties2(selected.physical_device, Some(budget_request))
-    };
+    let memory_props =
+        unsafe { instance.get_physical_device_memory_properties(selected.physical_device) };
     let device =
         unsafe { DeviceLoader::new(&instance, selected.physical_device, &device_create_info) }?;
     let queue = unsafe { device.get_device_queue(selected.queue_family_index, 0) };
@@ -505,9 +573,9 @@ fn prepare_and_test_device(
         &pipeline_layout,
         &pipelines,
         log_dupler,
-        memory_props2.memory_properties,
-        budget_structure,
-        verbose,
+        &selected.label,
+        memory_props,
+        env,
     );
     // Cleanup & Destruction
     unsafe {
@@ -535,47 +603,11 @@ fn test_device<Writer: std::io::Write>(
     pipeline_layout: &vk::PipelineLayout,
     pipelines: &ComputePipelines,
     mut log_dupler: output::LogDupler<Writer>,
+    selected_label: &String,
     memory_props: vk::PhysicalDeviceMemoryProperties,
-    budget_structure: ext_memory_budget::PhysicalDeviceMemoryBudgetPropertiesEXT,
-    verbose: bool,
+    env: &ProcessEnv,
 ) -> Result<(), Box<dyn std::error::Error>> {
-    let mut allocation_size = 0i64;
-    if verbose {
-        for i in 0..memory_props.memory_type_count as usize {
-            println!(
-                "memory type flags {:?} heap {}",
-                memory_props.memory_types[i].property_flags,
-                memory_props.memory_types[i].heap_index
-            );
-        }
-    }
-    for i in 0..memory_props.memory_heap_count as usize {
-        if verbose {
-            println!(
-                "heap size {:4.1}GB budget {:4.1}GB usage {:4.1}GB flags={:#?}",
-                memory_props.memory_heaps[i].size as f32 / GB,
-                budget_structure.heap_budget[i] as f32 / GB,
-                budget_structure.heap_usage[i] as f32 / GB,
-                memory_props.memory_heaps[i].flags,
-            )
-        }
-        if !memory_props.memory_heaps[i]
-            .flags
-            .contains(vk::MemoryHeapFlags::DEVICE_LOCAL)
-        {
-            continue;
-        }
-        let mut heap_free = memory_props.memory_heaps[i].size as i64;
-        let usage = budget_structure.heap_usage[i] as i64;
-        if usage > 0 && usage < heap_free {
-            heap_free -= usage;
-        }
-        let budget = budget_structure.heap_budget[i] as i64;
-        if budget > 0 {
-            heap_free = min(heap_free, budget);
-        }
-        allocation_size = max(allocation_size, heap_free - TEST_DATA_KEEP_FREE);
-    }
+    let mut allocation_size = env.max_test_bytes;
 
     let io_data_size = mem::size_of::<IOBuf>() as vk::DeviceSize;
 
@@ -598,7 +630,7 @@ fn test_device<Writer: std::io::Write>(
                 )
         })
         .ok_or("DEVICE_LOCAL | HOST_COHERENT memory type not available")?;
-    if verbose {
+    if env.verbose {
         println!(
             "IO memory                  type {}: {:?} heap {:?}",
             io_mem_index,
@@ -624,9 +656,8 @@ fn test_device<Writer: std::io::Write>(
     unsafe { device.bind_buffer_memory(io_buffer, io_memory, 0) }
         .err_as_str_context("bind_buffer_memory")?;
 
-    let min_wanted_allocation = TEST_DATA_KEEP_FREE;
     let (test_mem_reqs, test_buffer_create_info) =
-        memory_requirements(&device, min_wanted_allocation)?;
+        memory_requirements(&device, MIN_WANTED_ALLOCATION)?;
 
     let test_mem_index = (0..memory_props.memory_type_count)
         .find(|i| {
@@ -675,14 +706,16 @@ fn test_device<Writer: std::io::Write>(
     'memsize: loop {
         free_test_mem_and_buffers(&device, &mut test_buffer, &mut test_memory);
 
-        if allocation_size < min_wanted_allocation {
+        if allocation_size < MIN_WANTED_ALLOCATION {
             return Err(last_err);
         }
 
         let test_memory_allocate_info = vk::MemoryAllocateInfoBuilder::new()
             .allocation_size(allocation_size as u64)
             .memory_type_index(test_mem_index);
-        match unsafe { device.allocate_memory(&test_memory_allocate_info, None) }.err_as_str() {
+        match unsafe { device.allocate_memory(&test_memory_allocate_info, None) }
+            .err_retry_with_lower_memory(env, "allocate_memory")
+        {
             Err(err) => last_err = err,
             Ok(some_memory) => {
                 test_memory = Some(some_memory);
@@ -697,13 +730,13 @@ fn test_device<Writer: std::io::Write>(
                 match unsafe {
                     device.create_buffer(&test_buffer_create_info.size(test_data_size as u64), None)
                 }
-                .err_as_str()
+                .err_retry_with_lower_memory(env, "create_buffer")
                 {
                     Err(err) => last_err = err,
                     Ok(some_buffer) => {
                         test_buffer = Some(some_buffer);
                         match unsafe { device.bind_buffer_memory(some_buffer, some_memory, 0) }
-                            .err_as_str()
+                            .err_retry_with_lower_memory(env, "bind_buffer_memory")
                         {
                             Err(err) => last_err = err,
                             Ok(_) => {
@@ -724,7 +757,7 @@ fn test_device<Writer: std::io::Write>(
                                         let cmd_buf = cmd_bufs[0];
                                         device
                                             .begin_command_buffer(cmd_buf, &vk::CommandBufferBeginInfo::default())
-                                            .err_as_str_context("begin_command_buffer")?;
+                                            .err_retry_with_lower_memory(env, "begin_command_buffer")?;
                                         device.cmd_bind_pipeline(cmd_buf, vk::PipelineBindPoint::COMPUTE, pipeline);
                                         device.cmd_bind_descriptor_sets(
                                             cmd_buf,
@@ -740,14 +773,14 @@ fn test_device<Writer: std::io::Write>(
                                             1,
                                             1,
                                         );
-                                        device.end_command_buffer(cmd_buf).err_as_str_context("end_command_buffer")?;
+                                        device.end_command_buffer(cmd_buf).err_retry_with_lower_memory(env, "end_command_buffer")?;
                                         device
                                             .queue_submit(queue, submit_info, fence)
-                                            .err_as_str_context("queue_submit")?;
+                                            .err_retry_with_lower_memory(env, "queue_submit")?;
                                         device
                                             .wait_for_fences(&[fence], true, u64::MAX)
-                                            .err_as_str_context("wait_for_fences")?;
-                                        device.reset_fences(&[fence]).err_as_str_context("reset_fences")?;
+                                            .err_retry_with_lower_memory(env, "wait_for_fences")?;
+                                        device.reset_fences(&[fence]).err_retry_with_lower_memory(env, "reset_fences")?;
                                         Ok(())
                                     }
                                 };
@@ -781,21 +814,24 @@ fn test_device<Writer: std::io::Write>(
                 }
             }
         }
-        if warn_on_budget_alloc_fail {
-            warn_on_budget_alloc_fail = false;
-            println!("Failed allocating {:5.1}GB, trying to use smaller size. More system memory can help.", allocation_size as f32 / GB);
-        }
-        if verbose {
+        if env.verbose {
             println!(
                 "Don't testing {:5.1}GB due to error: {}",
                 allocation_size as f32 / GB,
                 last_err
             );
         }
-        allocation_size -= min_wanted_allocation;
+        if !env.interactive {
+            close::immediate_exit(true);
+        }
+        if warn_on_budget_alloc_fail {
+            warn_on_budget_alloc_fail = false;
+            println!("Failed allocating {:5.1}GB, trying to use smaller size. More system memory can help.", allocation_size as f32 / GB);
+        }
+        allocation_size -= ALLOCATION_TRY_STEP;
     }
 
-    if verbose {
+    if env.verbose {
         println!(
             "Test memory size {:5.1}GB   type {:2}: {:?} {:?}",
             allocation_size as f32 / GB,
@@ -876,22 +912,23 @@ fn test_device<Writer: std::io::Write>(
             } else {
                 speed_gbps = 0f32;
             }
-            writeln!(log_dupler, "{:7} iteration. Since last report passed {:15?} written {:6.1}GB, read: {:6.1}GB   {:6.1}GB/sec", iteration, elapsed, written_bytes as f32 / GB, read_bytes as f32 / GB, speed_gbps)?;
-            if verbose {
-                println!("{}", last_buffer_out);
-            }
-            written_bytes = 0i64;
-            read_bytes = 0i64;
             let second1 = time::Duration::from_secs(1);
             if next_report_duration.is_zero() {
+                writeln!(log_dupler, "Testing {}", selected_label)?;
                 next_report_duration = second1; //2nd report after 1 second
             } else if next_report_duration == second1 {
+                close::raise_status_bit(close::app_status::INITED_OK);
                 next_report_duration = second1 * 10; //3rd report after 10 seconds
             } else {
                 next_report_duration = second1 * 100; //later reports every 100 seconds
             }
+            writeln!(log_dupler, "{:7} iteration. Since last report passed {:15?} written {:6.1}GB, read: {:6.1}GB   {:6.1}GB/sec", iteration, elapsed, written_bytes as f32 / GB, read_bytes as f32 / GB, speed_gbps)?;
+            if env.verbose {
+                println!("{}", last_buffer_out);
+            }
+            written_bytes = 0i64;
+            read_bytes = 0i64;
             start = time::Instant::now();
-            close::raise_status_bit(close::app_status::INITED_OK);
         }
         if stop_testing {
             writeln!(log_dupler, "received user interruption, testing stopped")?;
@@ -1192,53 +1229,51 @@ fn prompt_for_label(verbose: bool) -> Option<usize> {
 struct TestStatus {
     test_status: u8,
 }
-fn test_in_this_process(
-    mut loaded_devices: LoadedDevices,
-    env: &mut ProcessEnv,
-    selected_index: usize,
-) -> ! {
+fn test_in_this_process(mut loaded_devices: LoadedDevices, env: &ProcessEnv) -> ! {
     let LoadedDevices(instance, _, _, device_create_info, devices_labeled_from_1) =
         &mut loaded_devices;
+    let selected_index = env.effective_index();
     if selected_index >= devices_labeled_from_1.len() {
         display_this_process_result(Some("No device at given index".into()), env.interactive)
+    }
+
+    if env.max_test_bytes == 0 {
+        display_this_process_result(
+            Some("Failed determining memory budget".into()),
+            env.interactive,
+        )
     }
 
     if let Err(e) = prepare_and_test_device(
         &instance,
         devices_labeled_from_1.swap_remove(selected_index),
         *device_create_info,
-        env.verbose,
+        env,
     ) {
         display_this_process_result(Some(e), env.interactive)
     }
     display_this_process_result(None, env.interactive)
 }
 
-fn init_vk_and_check_errors(
-    mut loaded_devices: LoadedDevices,
+enum SubprocessMode {
+    NotExeced,
+    FailedRetryLowerMemory,
+    DoneOrFailedNoretry,
+}
+fn test_selected_label(
+    loaded_devices: LoadedDevices,
     env: &mut ProcessEnv,
+    selected_label: usize,
 ) -> Result<(Option<LoadedDevices>, TestStatus), Box<dyn std::error::Error>> {
-    let LoadedDevices(_, _, _, _, devices_labeled_from_1) = &mut loaded_devices;
-
-    if env.device_label.is_none() {
-        println!();
-        for desc in devices_labeled_from_1.iter() {
-            println!("{}", desc.label);
-        }
-        if env.interactive {
-            env.device_label = prompt_for_label(env.verbose);
-        } else {
-            env.device_label = Some(0usize);
-        }
-    }
     if env.interactive {
-        close::setup_handler(true); //for interactive environments setup handler only after input prompt was run
-    }
-    if let Some(mut selected_index) = env.device_label {
-        if env.interactive {
+        let mut mode;
+        let mut main_code: u8 = 0;
+        loop {
+            mode = SubprocessMode::NotExeced;
             if let Some(argv0) = &env.argv0 {
                 if let Ok(mut child) = std::process::Command::new(argv0)
-                    .arg(selected_index.to_string())
+                    .arg(selected_label.to_string())
+                    .arg(env.max_test_bytes.to_string())
                     .spawn()
                 {
                     if env.verbose {
@@ -1262,7 +1297,7 @@ fn init_vk_and_check_errors(
                                     return Err("Exit code of test process not available".into())
                                 }
                                 Some(subprocess_code) => {
-                                    let mut main_code = subprocess_code as u8;
+                                    main_code = subprocess_code as u8;
                                     let strange_code = (main_code
                                         & close::app_status::SIGNATURE_MASK)
                                         != close::app_status::SIGNATURE;
@@ -1272,35 +1307,90 @@ fn init_vk_and_check_errors(
                                             "Exit code of test process can't be interpreted".into(),
                                         );
                                     }
-                                    if !parent_close_requested
-                                        && !close::check_any_bits_set(
-                                            main_code,
-                                            close::app_status::QUIT_JOB_REQUESTED,
-                                        )
+                                    if main_code
+                                        == (close::app_status::SIGNATURE
+                                            | close::app_status::RUNTIME_ABORT)
                                     {
-                                        println!("Seems child exited for no reason, code {subprocess_code}");
-                                        main_code |= close::app_status::RUNTIME_ABORT;
+                                        mode = SubprocessMode::FailedRetryLowerMemory;
+                                    } else {
+                                        mode = SubprocessMode::DoneOrFailedNoretry;
+                                        if !parent_close_requested
+                                            && !close::check_any_bits_set(
+                                                main_code,
+                                                close::app_status::QUIT_JOB_REQUESTED,
+                                            )
+                                        {
+                                            println!("Seems child exited for no reason, code {subprocess_code}");
+                                            main_code |= close::app_status::RUNTIME_ABORT;
+                                        }
                                     }
-                                    return Ok((
-                                        Some(loaded_devices),
-                                        TestStatus {
-                                            test_status: main_code
-                                                | (close::fetch_status()
-                                                    & close::app_status::QUIT_JOB_REQUESTED),
-                                        },
-                                    ));
                                 }
                             }
                         }
                     }
                 }
             }
-            println!("Using in-process testing method");
+            match mode {
+                SubprocessMode::NotExeced => {
+                    println!("Using in-process testing method");
+                    break;
+                }
+                SubprocessMode::FailedRetryLowerMemory => {
+                    let smaller_memory = env.max_test_bytes - ALLOCATION_TRY_STEP;
+                    if smaller_memory < MIN_WANTED_ALLOCATION {
+                        println!(
+                            "Using in-process testing method with small memory limit {}",
+                            env.max_test_bytes
+                        );
+                        break;
+                    }
+                    env.max_test_bytes = smaller_memory;
+                    if env.verbose {
+                        println!(
+                            "retrying subprocess with smaller memory limit {}",
+                            env.max_test_bytes
+                        );
+                    }
+                    continue;
+                }
+                SubprocessMode::DoneOrFailedNoretry => {
+                    return Ok((
+                        Some(loaded_devices),
+                        TestStatus {
+                            test_status: main_code
+                                | (close::fetch_status() & close::app_status::QUIT_JOB_REQUESTED),
+                        },
+                    ))
+                }
+            }
         }
-        if selected_index > 0 {
-            selected_index -= 1; //convert label to array index but treate zero label as default request.
+        println!("Using in-process testing method");
+    }
+    test_in_this_process(loaded_devices, env)
+}
+fn init_vk_and_check_errors(
+    loaded_devices: LoadedDevices,
+    env: &mut ProcessEnv,
+) -> Result<(Option<LoadedDevices>, TestStatus), Box<dyn std::error::Error>> {
+    if env.device_label.is_none() {
+        let LoadedDevices(_, _, _, _, devices_labeled_from_1) = &loaded_devices;
+        println!();
+        for desc in devices_labeled_from_1.iter() {
+            println!("{}", desc.label);
         }
-        test_in_this_process(loaded_devices, env, selected_index)
+        if env.interactive && devices_labeled_from_1.len() > 1 {
+            env.device_label = prompt_for_label(env.verbose);
+        } else {
+            env.device_label = Some(0usize);
+        }
+    }
+    if env.interactive {
+        close::setup_handler(true); //for interactive environments setup handler only after input prompt was run
+    }
+    if let Some(selected_label) = env.device_label {
+        try_fill_default_mem_budget(&loaded_devices, env);
+        let test_result = test_selected_label(loaded_devices, env, selected_label);
+        return test_result;
     } else {
         return Err("Test cancelled, no device selected".into());
     }
@@ -1310,8 +1400,18 @@ fn init_vk_and_check_errors(
 struct ProcessEnv {
     argv0: Option<OsString>,
     device_label: Option<usize>,
+    max_test_bytes: i64,
     verbose: bool,
     interactive: bool,
+}
+impl ProcessEnv {
+    fn effective_index(&self) -> usize {
+        match self.device_label {
+            None => 0,
+            Some(0) => 0,
+            Some(positive) => positive - 1,
+        }
+    }
 }
 
 fn init_running_env() -> ProcessEnv {
@@ -1337,6 +1437,16 @@ fn init_running_env() -> ProcessEnv {
             if let Ok(label_parsed) = argv1_label_str.parse::<usize>() {
                 process_env.interactive = false;
                 process_env.device_label = Some(label_parsed)
+            }
+            if let Some(argv2_mem_max_str) = args_os_iter
+                .next()
+                .as_ref()
+                .map(|os_str| os_str.to_str())
+                .flatten()
+            {
+                if let Ok(mem_max_parsed) = argv2_mem_max_str.parse::<i64>() {
+                    process_env.max_test_bytes = mem_max_parsed;
+                }
             }
         }
     }
@@ -1383,7 +1493,6 @@ fn display_result(
     }
     println!("");
     let mut key_reader = input::Reader::default();
-    let mut quit_fast = false;
     match result {
         Err(e) => println!("memtest_vulkan: early exit during init: {e}"),
         Ok((
@@ -1392,7 +1501,10 @@ fn display_result(
                 test_status: status,
             },
         )) => {
-            quit_fast |= close::check_any_bits_set(status, close::app_status::QUIT_JOB_REQUESTED);
+            if close::check_any_bits_set(status, close::app_status::QUIT_JOB_REQUESTED) {
+                //propagate closing flag to this process, so no risky-during close functions would be used
+                close::raise_status_bit(close::app_status::QUIT_JOB_REQUESTED);
+            }
             if !close::check_any_bits_set(status, close::app_status::INITED_OK) {
                 println!("memtest_vulkan: INIT OR FIRST testing failed due to runtime error");
             } else if close::check_any_bits_set(status, close::app_status::RUNTIME_ABORT) {
@@ -1411,7 +1523,7 @@ fn display_result(
         }
     }
     if interactive {
-        key_reader.wait_any_key(quit_fast);
+        key_reader.wait_any_key();
     }
     close::immediate_exit(false)
 }
