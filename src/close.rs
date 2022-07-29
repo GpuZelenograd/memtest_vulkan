@@ -78,7 +78,7 @@ pub fn setup_handler_impl() {
 
 #[cfg(windows)]
 fn immediate_exit_with_status() -> ! {
-    unsafe { windows_sys::Win32::System::Threading::ExitProcess(fetch_status().into()) }
+    unsafe { windows_sys::Win32::System::Threading::ExitProcess(APP_STATUS.load(SeqCst) as u32) }
 }
 
 #[cfg(unix)]
@@ -107,5 +107,5 @@ pub fn setup_handler_impl() {
 
 #[cfg(unix)]
 fn immediate_exit_with_status() -> ! {
-    unsafe { nix::libc::_exit(fetch_status().into()) }
+    unsafe { nix::libc::_exit(APP_STATUS.load(SeqCst) as i32) }
 }

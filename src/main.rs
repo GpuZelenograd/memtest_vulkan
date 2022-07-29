@@ -9,7 +9,7 @@ use erupt::{
     vk, DeviceLoader, EntryLoader, InstanceLoader,
 };
 use std::{
-    ffi::{c_void, CStr},
+    ffi::{c_void, CStr, OsString},
     fmt,
     io::Write,
     mem, time,
@@ -885,7 +885,6 @@ fn test_device<Writer: std::io::Write>(
             let second1 = time::Duration::from_secs(1);
             if next_report_duration.is_zero() {
                 next_report_duration = second1; //2nd report after 1 second
-                close::setup_handler(true);
             } else if next_report_duration == second1 {
                 next_report_duration = second1 * 10; //3rd report after 10 seconds
             } else {
@@ -940,8 +939,8 @@ fn load_instance(
             vk::api_version_minor(entry.instance_version()),
             vk::api_version_patch(entry.instance_version())
         );
+        println!();
     }
-    println!();
 
     let mut instance_extensions = Vec::new();
 
@@ -1014,6 +1013,7 @@ impl Drop for LoadedDevices {
     fn drop(&mut self) {
         let LoadedDevices(instance, _, messenger, _, _) = self;
         unsafe {
+            println!("Destroying vk instance...");
             if !messenger.is_null() {
                 instance.destroy_debug_utils_messenger_ext(*messenger, None);
             }
@@ -1122,7 +1122,7 @@ fn list_devices_ordered_labaled_from_1(
     ))
 }
 
-fn prompt_for_index(verbose: bool) -> Option<usize> {
+fn prompt_for_label(verbose: bool) -> Option<usize> {
     let mut device_test_index = Some(0usize);
     let prompt_start = time::Instant::now();
     let mut prompt_duration: Option<time::Duration> = Some(time::Duration::from_secs(10));
@@ -1165,11 +1165,7 @@ fn prompt_for_index(verbose: bool) -> Option<usize> {
                     }
                     false => match input_reader.current_input.parse::<usize>() {
                         Ok(parsed_idx) => {
-                            let mut parsed = parsed_idx;
-                            if parsed > 0 {
-                                parsed -= 1;
-                            }
-                            device_test_index = Some(parsed);
+                            device_test_index = Some(parsed_idx);
                             println!("");
                         }
                         Err(_) => {
@@ -1196,64 +1192,155 @@ fn prompt_for_index(verbose: bool) -> Option<usize> {
 struct TestStatus {
     test_status: u8,
 }
-fn init_vk_and_check_errors(
+fn test_in_this_process(
     mut loaded_devices: LoadedDevices,
-    device_test_index: &mut Option<usize>,
-    verbose: bool,
-) -> Result<(LoadedDevices, TestStatus), Box<dyn std::error::Error>> {
+    env: &mut ProcessEnv,
+    selected_index: usize,
+) -> ! {
     let LoadedDevices(instance, _, _, device_create_info, devices_labeled_from_1) =
         &mut loaded_devices;
+    if selected_index >= devices_labeled_from_1.len() {
+        display_this_process_result(Some("No device at given index".into()), env.interactive)
+    }
 
-    if device_test_index.is_none() {
+    if let Err(e) = prepare_and_test_device(
+        &instance,
+        devices_labeled_from_1.swap_remove(selected_index),
+        *device_create_info,
+        env.verbose,
+    ) {
+        display_this_process_result(Some(e), env.interactive)
+    }
+    display_this_process_result(None, env.interactive)
+}
+
+fn init_vk_and_check_errors(
+    mut loaded_devices: LoadedDevices,
+    env: &mut ProcessEnv,
+) -> Result<(Option<LoadedDevices>, TestStatus), Box<dyn std::error::Error>> {
+    let LoadedDevices(_, _, _, _, devices_labeled_from_1) = &mut loaded_devices;
+
+    if env.device_label.is_none() {
+        println!();
         for desc in devices_labeled_from_1.iter() {
             println!("{}", desc.label);
         }
-        *device_test_index = prompt_for_index(verbose);
+        if env.interactive {
+            env.device_label = prompt_for_label(env.verbose);
+        } else {
+            env.device_label = Some(0usize);
+        }
     }
-    if let Some(selected_index) = *device_test_index {
-        if selected_index >= devices_labeled_from_1.len() {
-            return Err("No device at given index".into());
-        }
-
-        let mut exit_status: u8 = 0;
-        match prepare_and_test_device(
-            &instance,
-            devices_labeled_from_1.swap_remove(selected_index),
-            *device_create_info,
-            verbose,
-        ) {
-            Ok(()) => {}
-            Err(e) => {
-                println!("Runtime error: {e}");
-                exit_status |= close::app_status::RUNTIME_ABORT;
+    if env.interactive {
+        close::setup_handler(true); //for interactive environments setup handler only after input prompt was run
+    }
+    if let Some(mut selected_index) = env.device_label {
+        if env.interactive {
+            if let Some(argv0) = &env.argv0 {
+                if let Ok(mut child) = std::process::Command::new(argv0)
+                    .arg(selected_index.to_string())
+                    .spawn()
+                {
+                    if env.verbose {
+                        println!("Spawned child {child:?} with PID {}", child.id());
+                    }
+                    let wait_result = child.wait();
+                    let parent_close_requested = close::close_requested();
+                    match wait_result {
+                        Err(e) => {
+                            println!(
+                                "wait error: {e}  parent_close_requested: {parent_close_requested}"
+                            );
+                            return Err("Problem waiting for subprocess".into());
+                        }
+                        Ok(exit_status) => {
+                            if env.verbose {
+                                println!("Subprocess status {exit_status} parent_close_requested {parent_close_requested}");
+                            }
+                            match exit_status.code() {
+                                None => {
+                                    return Err("Exit code of test process not available".into())
+                                }
+                                Some(subprocess_code) => {
+                                    let mut main_code = subprocess_code as u8;
+                                    let strange_code = (main_code
+                                        & close::app_status::SIGNATURE_MASK)
+                                        != close::app_status::SIGNATURE;
+                                    if strange_code {
+                                        println!("Unexpected code {subprocess_code}");
+                                        return Err(
+                                            "Exit code of test process can't be interpreted".into(),
+                                        );
+                                    }
+                                    if !parent_close_requested
+                                        && !close::check_any_bits_set(
+                                            main_code,
+                                            close::app_status::QUIT_JOB_REQUESTED,
+                                        )
+                                    {
+                                        println!("Seems child exited for no reason, code {subprocess_code}");
+                                        main_code |= close::app_status::RUNTIME_ABORT;
+                                    }
+                                    return Ok((
+                                        Some(loaded_devices),
+                                        TestStatus {
+                                            test_status: main_code
+                                                | (close::fetch_status()
+                                                    & close::app_status::QUIT_JOB_REQUESTED),
+                                        },
+                                    ));
+                                }
+                            }
+                        }
+                    }
+                }
             }
+            println!("Using in-process testing method");
         }
-        exit_status |= close::fetch_status();
-        Ok((
-            loaded_devices,
-            TestStatus {
-                test_status: exit_status,
-            },
-        ))
+        if selected_index > 0 {
+            selected_index -= 1; //convert label to array index but treate zero label as default request.
+        }
+        test_in_this_process(loaded_devices, env, selected_index)
     } else {
         return Err("Test cancelled, no device selected".into());
     }
 }
 
-fn start_displaying_and_check_verbose(interavtive: bool) -> bool {
-    let mut verbose = cfg!(feature = "verbose");
-    verbose |= match std::env::args_os().next() {
-        Some(argv0) => match std::path::PathBuf::from(argv0)
+#[derive(Default)]
+struct ProcessEnv {
+    argv0: Option<OsString>,
+    device_label: Option<usize>,
+    verbose: bool,
+    interactive: bool,
+}
+
+fn init_running_env() -> ProcessEnv {
+    let mut process_env = ProcessEnv::default();
+    process_env.verbose = cfg!(feature = "verbose");
+    let mut args_os_iter = std::env::args_os();
+    if let Some(argv0) = args_os_iter.next() {
+        if let Some(file_stem) = std::path::PathBuf::from(&argv0)
             .file_stem()
-            .map(std::ffi::OsStr::to_str)
+            .map(|os_str| os_str.to_str())
             .flatten()
         {
-            Some(file_stem) => file_stem.to_ascii_lowercase().contains("verbose"),
-            _ => false,
-        },
-        _ => false,
-    };
-    if interavtive {
+            process_env.verbose |= file_stem.to_ascii_lowercase().contains("verbose");
+        }
+        process_env.argv0 = Some(argv0);
+        process_env.interactive = true;
+        if let Some(argv1_label_str) = args_os_iter
+            .next()
+            .as_ref()
+            .map(|os_str| os_str.to_str())
+            .flatten()
+        {
+            if let Ok(label_parsed) = argv1_label_str.parse::<usize>() {
+                process_env.interactive = false;
+                process_env.device_label = Some(label_parsed)
+            }
+        }
+    }
+    if process_env.interactive {
         print!("https://github.com/GpuZelenograd/");
         let _ = std::io::stdout().flush();
         let mut color_setter = input::Reader::default();
@@ -1265,17 +1352,36 @@ fn start_displaying_and_check_verbose(interavtive: bool) -> bool {
         drop(color_setter);
         println!("To finish testing use Ctrl+C");
     }
-    verbose
+    process_env
 }
-fn display_result(
-    result: Result<(LoadedDevices, TestStatus), Box<dyn std::error::Error>>,
-    verbose: bool,
+
+fn display_this_process_result(
+    maybe_err: Option<Box<dyn std::error::Error>>,
+    interactive: bool,
 ) -> ! {
-    if verbose {
-        if let Ok((_, some_status)) = &result {
-            println!("test exit status:{}", some_status.test_status);
-        }
+    if let Some(e) = maybe_err {
+        println!("Runtime error: {e}");
+        close::raise_status_bit(close::app_status::RUNTIME_ABORT);
     }
+    display_result(
+        Ok((
+            None,
+            TestStatus {
+                test_status: close::fetch_status(),
+            },
+        )),
+        interactive,
+    )
+}
+
+fn display_result(
+    result: Result<(Option<LoadedDevices>, TestStatus), Box<dyn std::error::Error>>,
+    interactive: bool,
+) -> ! {
+    if !interactive {
+        close::immediate_exit(false);
+    }
+    println!("");
     let mut key_reader = input::Reader::default();
     let mut quit_fast = false;
     match result {
@@ -1286,6 +1392,7 @@ fn display_result(
                 test_status: status,
             },
         )) => {
+            quit_fast |= close::check_any_bits_set(status, close::app_status::QUIT_JOB_REQUESTED);
             if !close::check_any_bits_set(status, close::app_status::INITED_OK) {
                 println!("memtest_vulkan: INIT OR FIRST testing failed due to runtime error");
             } else if close::check_any_bits_set(status, close::app_status::RUNTIME_ABORT) {
@@ -1293,23 +1400,27 @@ fn display_result(
             } else {
                 let has_errors =
                     close::check_any_bits_set(status, close::app_status::RUNTIME_ERRORS);
-                key_reader.set_pass_fail_accent_color(has_errors);
+                if interactive {
+                    key_reader.set_pass_fail_accent_color(has_errors);
+                }
                 match has_errors {
                     true => println!("memtest_vulkan: memory/gpu ERRORS FOUND, testing finished."),
                     false => println!("memtest_vulkan: no any errors, testing PASSed."),
                 }
             }
-            quit_fast |= close::check_any_bits_set(status, close::app_status::QUIT_JOB_REQUESTED);
         }
     }
-    key_reader.wait_any_key(quit_fast);
+    if interactive {
+        key_reader.wait_any_key(quit_fast);
+    }
     close::immediate_exit(false)
 }
 fn main() -> () {
-    let mut device_test_index: Option<usize> = None;
-    let verbose = start_displaying_and_check_verbose(device_test_index.is_none());
-    let result = list_devices_ordered_labaled_from_1(verbose).and_then(|loaded_devices| {
-        init_vk_and_check_errors(loaded_devices, &mut device_test_index, verbose)
-    });
-    display_result(result, verbose);
+    let mut env = init_running_env();
+    if !env.interactive {
+        close::setup_handler(false);
+    }
+    let result = list_devices_ordered_labaled_from_1(env.verbose)
+        .and_then(|loaded_devices| init_vk_and_check_errors(loaded_devices, &mut env));
+    display_result(result, env.interactive);
 }
