@@ -1525,6 +1525,7 @@ fn display_result(
     if interactive {
         key_reader.wait_any_key();
     }
+    drop(key_reader); //restore terminal state before exiting
     close::immediate_exit(false)
 }
 fn main() -> () {
