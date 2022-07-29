@@ -81,8 +81,8 @@ impl Reader {
         }));
     }
 
-    pub fn wait_any_key(&mut self) {
-        if crate::close::close_requested() {
+    pub fn wait_any_key(&mut self, timeout_instead_of_interactivity: bool) {
+        if timeout_instead_of_interactivity || crate::close::close_requested() {
             //interaction methods not available while closing on windows
             println!("(don't waiting for a keypress, since close requested)");
             std::thread::sleep(std::time::Duration::from_secs(3));

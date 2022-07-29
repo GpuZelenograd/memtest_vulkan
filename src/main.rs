@@ -885,7 +885,7 @@ fn test_device<Writer: std::io::Write>(
             let second1 = time::Duration::from_secs(1);
             if next_report_duration.is_zero() {
                 next_report_duration = second1; //2nd report after 1 second
-                close::setup_handler();
+                close::setup_handler(true);
             } else if next_report_duration == second1 {
                 next_report_duration = second1 * 10; //3rd report after 10 seconds
             } else {
@@ -1194,7 +1194,6 @@ fn prompt_for_index(verbose: bool) -> Option<usize> {
     device_test_index
 }
 struct TestStatus {
-    external_exit_request: bool,
     test_status: u8,
 }
 fn init_vk_and_check_errors(
@@ -1216,27 +1215,24 @@ fn init_vk_and_check_errors(
             return Err("No device at given index".into());
         }
 
-        let external_exit_request;
-
+        let mut exit_status: u8 = 0;
         match prepare_and_test_device(
             &instance,
             devices_labeled_from_1.swap_remove(selected_index),
             *device_create_info,
             verbose,
         ) {
-            Ok(()) => {
-                external_exit_request = true;
-            }
+            Ok(()) => {}
             Err(e) => {
                 println!("Runtime error: {e}");
-                external_exit_request = false;
+                exit_status |= close::app_status::RUNTIME_ABORT;
             }
         }
+        exit_status |= close::fetch_status();
         Ok((
             loaded_devices,
             TestStatus {
-                external_exit_request: external_exit_request,
-                test_status: close::fetch_status(),
+                test_status: exit_status,
             },
         ))
     } else {
@@ -1272,49 +1268,42 @@ fn start_displaying_and_check_verbose(interavtive: bool) -> bool {
     verbose
 }
 fn display_result(
-    result: &Result<(LoadedDevices, TestStatus), Box<dyn std::error::Error>>,
+    result: Result<(LoadedDevices, TestStatus), Box<dyn std::error::Error>>,
     verbose: bool,
-) -> () {
+) -> ! {
     if verbose {
-        if let Ok((_, some_status)) = result {
-            println!(
-                "exit was expected:{} exit status:{}",
-                some_status.external_exit_request, some_status.test_status
-            );
+        if let Ok((_, some_status)) = &result {
+            println!("test exit status:{}", some_status.test_status);
         }
     }
     let mut key_reader = input::Reader::default();
+    let mut quit_fast = false;
     match result {
         Err(e) => println!("memtest_vulkan: early exit during init: {e}"),
         Ok((
             _,
             TestStatus {
-                external_exit_request: false,
                 test_status: status,
             },
         )) => {
-            if close::check_any_bits_set(*status, close::app_status::INITED_OK) {
+            if !close::check_any_bits_set(status, close::app_status::INITED_OK) {
+                println!("memtest_vulkan: INIT OR FIRST testing failed due to runtime error");
+            } else if close::check_any_bits_set(status, close::app_status::RUNTIME_ABORT) {
                 println!("memtest_vulkan: First test passed, but THEN runtime error occured");
             } else {
-                println!("memtest_vulkan: INIT OR FIRST testing failed due to runtime error");
+                let has_errors =
+                    close::check_any_bits_set(status, close::app_status::RUNTIME_ERRORS);
+                key_reader.set_pass_fail_accent_color(has_errors);
+                match has_errors {
+                    true => println!("memtest_vulkan: memory/gpu ERRORS FOUND, testing finished."),
+                    false => println!("memtest_vulkan: no any errors, testing PASSed."),
+                }
             }
-        }
-        Ok((
-            _,
-            TestStatus {
-                external_exit_request: true,
-                test_status: status,
-            },
-        )) => {
-            let has_errors = close::check_any_bits_set(*status, close::app_status::RUNTIME_ERRORS);
-            key_reader.set_pass_fail_accent_color(has_errors);
-            match has_errors {
-                true => println!("memtest_vulkan: memory/gpu ERRORS FOUND, testing finished."),
-                false => println!("memtest_vulkan: no any errors, testing finished."),
-            }
+            quit_fast |= close::check_any_bits_set(status, close::app_status::QUIT_JOB_REQUESTED);
         }
     }
-    key_reader.wait_any_key();
+    key_reader.wait_any_key(quit_fast);
+    close::immediate_exit(false)
 }
 fn main() -> () {
     let mut device_test_index: Option<usize> = None;
@@ -1322,5 +1311,5 @@ fn main() -> () {
     let result = list_devices_ordered_labaled_from_1(verbose).and_then(|loaded_devices| {
         init_vk_and_check_errors(loaded_devices, &mut device_test_index, verbose)
     });
-    display_result(&result, verbose);
+    display_result(result, verbose);
 }
