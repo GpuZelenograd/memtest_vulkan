@@ -1109,7 +1109,7 @@ fn load_instance(
             &vk::InstanceCreateInfoBuilder::new().application_info(&app_info),
         )
     }
-    .err_as_str_context("instance fallback creation without validation layers");
+    .err_as_str_context("instance. Try specifying icd.json via VK_DRIVER_FILES env var");
     match simple_instance_try {
         Ok(instance) => Ok((instance, entry, messenger)),
         Err(e) => {
