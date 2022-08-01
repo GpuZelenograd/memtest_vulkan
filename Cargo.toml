@@ -1,6 +1,6 @@
-#!/usr/bin/env -Scargo run --release --no-default-features --manifest-path
+#!/usr/bin/env -Scargo run --release --manifest-path
 #cargo fmt
-#cargo build --release --no-default-features --target x86_64-pc-windows-gnu
+#cargo build --release --target x86_64-pc-windows-gnu
 [package]
 edition = '2021'
 name = 'memtest_vulkan'
@@ -13,7 +13,6 @@ fs4 = '0.6.2'
 chrono = '0.4.19'
 
 [features]
-default = ["verbose"]
 verbose = []
 
 [target.'cfg(windows)'.dependencies.windows-sys]

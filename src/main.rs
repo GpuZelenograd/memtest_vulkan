@@ -9,6 +9,7 @@ use erupt::{
     vk, DeviceLoader, EntryLoader, InstanceLoader,
 };
 use std::{
+    env,
     ffi::{c_void, CStr, OsString},
     fmt,
     io::Write,
@@ -26,6 +27,7 @@ impl core::ops::Deref for CStrStaticPtr {
 }
 unsafe impl Sync for CStrStaticPtr {}
 
+const VK_LOADER_DEBUG: &str = "VK_LOADER_DEBUG";
 const LAYER_KHRONOS_VALIDATION: &CStr = c_str!("VK_LAYER_KHRONOS_validation");
 static LAYER_KHRONOS_VALIDATION_ARRAY: CStrStaticPtr =
     CStrStaticPtr([LAYER_KHRONOS_VALIDATION.as_ptr()]);
@@ -314,11 +316,48 @@ trait MapErrStr {
         self,
         context: &str,
     ) -> Result<Self::ValueType, Box<dyn std::error::Error>>;
+}
+
+trait MapErrRetryWithLowerMemory {
+    type ValueType;
     fn err_retry_with_lower_memory(
         self,
         env: &ProcessEnv,
         context: &str,
     ) -> Result<Self::ValueType, Box<dyn std::error::Error>>;
+}
+
+impl<T> MapErrStr for std::result::Result<T, erupt::LoaderError> {
+    type ValueType = T;
+    fn err_as_str(self) -> Result<Self::ValueType, Box<dyn std::error::Error>> {
+        self.map_err(|res| {
+            let msg = match res {
+                erupt::LoaderError::SymbolNotAvailable => {
+                    "SymbolNotAvailable in Loader".to_string()
+                }
+                erupt::LoaderError::VulkanError(result) => format!("{}", result),
+            } + " while getting "
+                + std::any::type_name::<Self::ValueType>();
+            msg.to_string().into()
+        })
+    }
+    fn err_as_str_context(
+        self,
+        context: &str,
+    ) -> Result<Self::ValueType, Box<dyn std::error::Error>> {
+        self.map_err(|res| {
+            let msg = match res {
+                erupt::LoaderError::SymbolNotAvailable => {
+                    "SymbolNotAvailable in Loader".to_string()
+                }
+                erupt::LoaderError::VulkanError(result) => format!("{}", result),
+            } + " while getting "
+                + std::any::type_name::<Self::ValueType>()
+                + " in context "
+                + context;
+            msg.to_string().into()
+        })
+    }
 }
 
 impl<T> MapErrStr for erupt::utils::VulkanResult<T> {
@@ -345,6 +384,9 @@ impl<T> MapErrStr for erupt::utils::VulkanResult<T> {
             msg.to_string().into()
         })
     }
+}
+impl<T> MapErrRetryWithLowerMemory for erupt::utils::VulkanResult<T> {
+    type ValueType = T;
     fn err_retry_with_lower_memory(
         self,
         env: &ProcessEnv,
@@ -414,7 +456,7 @@ fn free_test_mem_and_buffers(
 }
 fn try_fill_default_mem_budget(loaded_devices: &LoadedDevices, env: &mut ProcessEnv) {
     let selected_index = env.effective_index();
-    let LoadedDevices(instance, _, _, _, devices_labeled_from_1) = &loaded_devices;
+    let LoadedDevices(instance, _, _, devices_labeled_from_1) = &loaded_devices;
 
     if env.max_test_bytes > 0 || selected_index >= devices_labeled_from_1.len() {
         return;
@@ -466,7 +508,6 @@ fn try_fill_default_mem_budget(loaded_devices: &LoadedDevices, env: &mut Process
 fn prepare_and_test_device(
     instance: &erupt::InstanceLoader,
     selected: NamedComputeDevice,
-    device_create_info_no_queue: vk::DeviceCreateInfo,
     env: &ProcessEnv,
 ) -> Result<(), Box<dyn std::error::Error>> {
     const MAX_LOG_SIZE: u64 = 50 * 1024 * 1024;
@@ -481,9 +522,8 @@ fn prepare_and_test_device(
         .queue_family_index(selected.queue_family_index)
         .queue_priorities(&[1.0])];
 
-    let device_create_info = *device_create_info_no_queue
-        .into_builder()
-        .queue_create_infos(&queue_create_info);
+    let device_create_info =
+        vk::DeviceCreateInfoBuilder::new().queue_create_infos(&queue_create_info);
 
     let memory_props =
         unsafe { instance.get_physical_device_memory_properties(selected.physical_device) };
@@ -964,11 +1004,15 @@ fn load_instance(
         erupt::InstanceLoader,
         erupt::EntryLoader,
         vk::DebugUtilsMessengerEXT,
-        vk::DeviceCreateInfo,
     ),
     Box<dyn std::error::Error>,
 > {
-    let entry = EntryLoader::new()?;
+    let override_vk_loader_debug = env::var_os(VK_LOADER_DEBUG).is_none();
+    if verbose && override_vk_loader_debug {
+        env::set_var(VK_LOADER_DEBUG, "error,warn");
+    }
+
+    let mut entry = EntryLoader::new()?;
     if verbose {
         println!(
             "Verbose feature enabled (or 'verbose' found in name). Vulkan instance {}.{}.{}",
@@ -976,6 +1020,44 @@ fn load_instance(
             vk::api_version_minor(entry.instance_version()),
             vk::api_version_patch(entry.instance_version())
         );
+        for (idx, prop) in unsafe { entry.enumerate_instance_layer_properties(None) }
+            .err_as_str()
+            .unwrap_or_default()
+            .iter()
+            .enumerate()
+        {
+            if idx == 0 {
+                print!("Available: ");
+            } else {
+                print!(", ");
+            }
+
+            print!("{}", unsafe {
+                CStr::from_ptr(prop.layer_name.as_ptr())
+                    .to_str()
+                    .unwrap_or("Invalid property_name")
+            });
+        }
+        println!();
+        for (idx, ext) in unsafe { entry.enumerate_instance_extension_properties(None, None) }
+            .err_as_str()
+            .unwrap_or_default()
+            .iter()
+            .enumerate()
+        {
+            if idx == 0 {
+                print!("Extensions: ");
+            } else {
+                print!(", ");
+            }
+
+            print!("{}", unsafe {
+                CStr::from_ptr(ext.extension_name.as_ptr())
+                    .to_str()
+                    .unwrap_or("Invalid extension_name")
+            });
+        }
+        println!();
         println!();
     }
 
@@ -990,7 +1072,10 @@ fn load_instance(
         .application_info(&app_info);
 
     let mut messenger = vk::DebugUtilsMessengerEXT::null();
-    match unsafe { InstanceLoader::new(&entry, &instance_create_info) } {
+    match unsafe {
+        InstanceLoader::new(&entry, &instance_create_info)
+            .err_as_str_context("instance with validation")
+    } {
         Ok(instance_with_validation) => {
             let mut severity = ext_debug_utils::DebugUtilsMessageSeverityFlagsEXT::WARNING_EXT
                 | ext_debug_utils::DebugUtilsMessageSeverityFlagsEXT::ERROR_EXT;
@@ -1008,13 +1093,7 @@ fn load_instance(
             }
             .result()
             .unwrap_or_default();
-            return Ok((
-                instance_with_validation,
-                entry,
-                messenger,
-                *vk::DeviceCreateInfoBuilder::new()
-                    .enabled_layer_names(&*LAYER_KHRONOS_VALIDATION_ARRAY),
-            ));
+            return Ok((instance_with_validation, entry, messenger));
         }
         Err(e) => {
             if verbose {
@@ -1022,33 +1101,47 @@ fn load_instance(
             }
         }
     }
-    //fallback creation without validation and extensions
 
-    let instance = unsafe {
+    //fallback creation without validation and extensions
+    let simple_instance_try = unsafe {
         InstanceLoader::new(
             &entry,
             &vk::InstanceCreateInfoBuilder::new().application_info(&app_info),
         )
-    }?;
-    Ok((
-        instance,
-        entry,
-        messenger,
-        *vk::DeviceCreateInfoBuilder::new(),
-    ))
+    }
+    .err_as_str_context("instance fallback creation without validation layers");
+    match simple_instance_try {
+        Ok(instance) => Ok((instance, entry, messenger)),
+        Err(e) => {
+            if !override_vk_loader_debug {
+                return Err(e);
+            }
+            drop(entry);
+            //retry instance creation with loader debuf enabled
+            env::set_var(VK_LOADER_DEBUG, "all");
+            entry = EntryLoader::new()?;
+            let debug_instance_try = unsafe {
+                InstanceLoader::new(
+                    &entry,
+                    &vk::InstanceCreateInfoBuilder::new().application_info(&app_info),
+                )
+            }
+            .map_err(|_second_error_ignired| e)?;
+            Ok((debug_instance_try, entry, messenger))
+        }
+    }
 }
 //InstanceLoader must be dropped after EntryLoader
 struct LoadedDevices(
     erupt::InstanceLoader,
     erupt::EntryLoader,
     vk::DebugUtilsMessengerEXT,
-    vk::DeviceCreateInfo,
     Vec<NamedComputeDevice>,
 );
 
 impl Drop for LoadedDevices {
     fn drop(&mut self) {
-        let LoadedDevices(instance, _, messenger, _, _) = self;
+        let LoadedDevices(instance, _, messenger, _) = self;
         unsafe {
             println!("Destroying vk instance...");
             if !messenger.is_null() {
@@ -1061,7 +1154,7 @@ impl Drop for LoadedDevices {
 fn list_devices_ordered_labaled_from_1(
     verbose: bool,
 ) -> Result<LoadedDevices, Box<dyn std::error::Error>> {
-    let (instance, entry, messenger, device_create_info) = load_instance(verbose)?;
+    let (instance, entry, messenger) = load_instance(verbose)?;
     let mut compute_capable_devices: Vec<_> = unsafe { instance.enumerate_physical_devices(None) }
         .err_as_str()?
         .into_iter()
@@ -1150,13 +1243,7 @@ fn list_devices_ordered_labaled_from_1(
             queue_family_index: d.1,
         });
     }
-    Ok(LoadedDevices(
-        instance,
-        entry,
-        messenger,
-        device_create_info,
-        numbered_devices,
-    ))
+    Ok(LoadedDevices(instance, entry, messenger, numbered_devices))
 }
 
 fn prompt_for_label(verbose: bool) -> Option<usize> {
@@ -1230,8 +1317,7 @@ struct TestStatus {
     test_status: u8,
 }
 fn test_in_this_process(mut loaded_devices: LoadedDevices, env: &ProcessEnv) -> ! {
-    let LoadedDevices(instance, _, _, device_create_info, devices_labeled_from_1) =
-        &mut loaded_devices;
+    let LoadedDevices(instance, _, _, devices_labeled_from_1) = &mut loaded_devices;
     let selected_index = env.effective_index();
     if selected_index >= devices_labeled_from_1.len() {
         display_this_process_result(Some("No device at given index".into()), env.interactive)
@@ -1247,7 +1333,6 @@ fn test_in_this_process(mut loaded_devices: LoadedDevices, env: &ProcessEnv) -> 
     if let Err(e) = prepare_and_test_device(
         &instance,
         devices_labeled_from_1.swap_remove(selected_index),
-        *device_create_info,
         env,
     ) {
         display_this_process_result(Some(e), env.interactive)
@@ -1373,7 +1458,7 @@ fn init_vk_and_check_errors(
     env: &mut ProcessEnv,
 ) -> Result<(Option<LoadedDevices>, TestStatus), Box<dyn std::error::Error>> {
     if env.device_label.is_none() {
-        let LoadedDevices(_, _, _, _, devices_labeled_from_1) = &loaded_devices;
+        let LoadedDevices(_, _, _, devices_labeled_from_1) = &loaded_devices;
         println!();
         for desc in devices_labeled_from_1.iter() {
             println!("{}", desc.label);
