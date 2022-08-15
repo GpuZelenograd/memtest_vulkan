@@ -898,10 +898,10 @@ fn test_device<Writer: std::io::Write>(
             execute_wait_queue(test_offset, pipelines.write)?; //use emulate_write_bugs for error simulation
             written_bytes += test_window_size;
         }
-        buffer_in.set_calc_param_for_starting_window();
         let mut last_buffer_out: IOBuf = IOBuf::default();
         for window_idx in 0..test_window_count {
             let reread_mode_for_this_win = window_idx == 0;
+            buffer_in.set_calc_param_for_starting_window();
             buffer_in.calc_param += window_idx as u32 * 0x81 as u32;
             unsafe {
                 std::ptr::write(
