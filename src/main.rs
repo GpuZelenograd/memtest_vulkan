@@ -981,7 +981,7 @@ fn test_device<Writer: std::io::Write>(
             } else {
                 next_report_duration = second1 * 100; //later reports every 100 seconds
             }
-            writeln!(log_dupler, "{:7} iteration. Since last report passed {:15?} written {:6.1}GB, read: {:6.1}GB   {:6.1}GB/sec", iteration, elapsed, written_bytes as f32 / GB, read_bytes as f32 / GB, speed_gbps)?;
+            writeln!(log_dupler, "{:7} iteration. Since last report passed {:15?} written {:7.1}GB, read: {:7.1}GB   {:6.1}GB/sec", iteration, elapsed, written_bytes as f32 / GB, read_bytes as f32 / GB, speed_gbps)?;
             if env.verbose {
                 println!("{}", last_buffer_out);
             }
