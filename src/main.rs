@@ -149,7 +149,9 @@ const ALLOCATION_TRY_STEP: i64 = TEST_DATA_KEEP_FREE;
 
 struct ComputePipelines {
     read: vk::Pipeline,
+    #[allow(dead_code)]
     write: vk::Pipeline,
+    #[allow(dead_code)]
     emulate_write_bugs: vk::Pipeline,
 }
 
@@ -316,6 +318,15 @@ trait MapErrStr {
         self,
         context: &str,
     ) -> Result<Self::ValueType, Box<dyn std::error::Error>>;
+    fn unwrap_or_display(self, env: &ProcessEnv) -> Self::ValueType
+    where
+        Self: Sized,
+    {
+        match self.err_as_str() {
+            Err(e) => display_this_process_result(Some(e), env),
+            Ok(v) => v,
+        }
+    }
 }
 
 trait MapErrRetryWithLowerMemory {
@@ -394,17 +405,20 @@ impl<T> MapErrRetryWithLowerMemory for erupt::utils::VulkanResult<T> {
     ) -> Result<Self::ValueType, Box<dyn std::error::Error>> {
         let result = self.result();
         result.map_err(|res| {
-            if !env.interactive
-                && !close::check_any_bits_set(close::fetch_status(), close::app_status::INITED_OK)
-            {
-                //immediate exit in non-interactive during init to initiate try with lower memory
-                close::immediate_exit(true);
-            }
             let msg = res.to_string()
                 + " while getting "
                 + std::any::type_name::<Self::ValueType>()
                 + " in context "
                 + context;
+            if !env.interactive
+                && !close::check_any_bits_set(close::fetch_status(), close::app_status::INITED_OK)
+            {
+                if env.verbose {
+                    println!("Retrying with lower memory due to {}", msg);
+                }
+                //immediate exit in non-interactive during init to initiate try with lower memory
+                close::immediate_exit(true);
+            }
             msg.to_string().into()
         })
     }
@@ -509,7 +523,7 @@ fn prepare_and_test_device(
     instance: &erupt::InstanceLoader,
     selected: NamedComputeDevice,
     env: &ProcessEnv,
-) -> Result<(), Box<dyn std::error::Error>> {
+) -> ! {
     const MAX_LOG_SIZE: u64 = 50 * 1024 * 1024;
     //log is put in current directory. This is intentional - run from other dir to use another log
     let log_dupler = output::LogDupler::new(
@@ -527,20 +541,25 @@ fn prepare_and_test_device(
 
     let memory_props =
         unsafe { instance.get_physical_device_memory_properties(selected.physical_device) };
-    let device =
-        unsafe { DeviceLoader::new(&instance, selected.physical_device, &device_create_info) }?;
+    let device = match unsafe {
+        DeviceLoader::new(&instance, selected.physical_device, &device_create_info)
+    } {
+        Ok(device) => device,
+        Err(e) => display_this_process_result(Some(e.into()), env),
+    };
     let queue = unsafe { device.get_device_queue(selected.queue_family_index, 0) };
 
     let cmd_pool_info = vk::CommandPoolCreateInfoBuilder::new()
         .queue_family_index(selected.queue_family_index)
         .flags(vk::CommandPoolCreateFlags::RESET_COMMAND_BUFFER);
-    let cmd_pool = unsafe { device.create_command_pool(&cmd_pool_info, None) }.err_as_str()?;
+    let cmd_pool =
+        unsafe { device.create_command_pool(&cmd_pool_info, None) }.unwrap_or_display(env);
 
     let cmd_buf_info = vk::CommandBufferAllocateInfoBuilder::new()
         .command_pool(cmd_pool)
         .command_buffer_count(1)
         .level(vk::CommandBufferLevel::PRIMARY);
-    let cmd_bufs = unsafe { device.allocate_command_buffers(&cmd_buf_info) }.err_as_str()?;
+    let cmd_bufs = unsafe { device.allocate_command_buffers(&cmd_buf_info) }.unwrap_or_display(env);
 
     let desc_pool_sizes = &[vk::DescriptorPoolSizeBuilder::new()
         .descriptor_count(2)
@@ -548,7 +567,8 @@ fn prepare_and_test_device(
     let desc_pool_info = vk::DescriptorPoolCreateInfoBuilder::new()
         .pool_sizes(desc_pool_sizes)
         .max_sets(1);
-    let desc_pool = unsafe { device.create_descriptor_pool(&desc_pool_info, None) }.err_as_str()?;
+    let desc_pool =
+        unsafe { device.create_descriptor_pool(&desc_pool_info, None) }.unwrap_or_display(env);
 
     let desc_layout_bindings = &[
         vk::DescriptorSetLayoutBindingBuilder::new()
@@ -564,22 +584,25 @@ fn prepare_and_test_device(
     ];
     let desc_layout_info =
         vk::DescriptorSetLayoutCreateInfoBuilder::new().bindings(desc_layout_bindings);
-    let desc_layouts =
-        [unsafe { device.create_descriptor_set_layout(&desc_layout_info, None) }.err_as_str()?];
+    let desc_layouts = [
+        unsafe { device.create_descriptor_set_layout(&desc_layout_info, None) }
+            .unwrap_or_display(env),
+    ];
 
     let desc_info = vk::DescriptorSetAllocateInfoBuilder::new()
         .descriptor_pool(desc_pool)
         .set_layouts(&desc_layouts);
-    let desc_sets = unsafe { device.allocate_descriptor_sets(&desc_info) }.err_as_str()?;
+    let desc_sets = unsafe { device.allocate_descriptor_sets(&desc_info) }.unwrap_or_display(env);
 
     let pipeline_layout_info =
         vk::PipelineLayoutCreateInfoBuilder::new().set_layouts(&desc_layouts);
-    let pipeline_layout =
-        unsafe { device.create_pipeline_layout(&pipeline_layout_info, None) }.err_as_str()?;
+    let pipeline_layout = unsafe { device.create_pipeline_layout(&pipeline_layout_info, None) }
+        .unwrap_or_display(env);
 
     let spv_code = Vec::from(READ_SHADER);
     let create_info = vk::ShaderModuleCreateInfoBuilder::new().code(&spv_code);
-    let shader_mod = unsafe { device.create_shader_module(&create_info, None) }.err_as_str()?;
+    let shader_mod =
+        unsafe { device.create_shader_module(&create_info, None) }.unwrap_or_display(env);
 
     let pipeline_infos = [
         c_str!("read"),
@@ -598,14 +621,14 @@ fn prepare_and_test_device(
 
     let pipelines =
         unsafe { device.create_compute_pipelines(Default::default(), &pipeline_infos, None) }
-            .err_as_str()?;
+            .unwrap_or_display(env);
     let pipelines = ComputePipelines {
         read: pipelines[0],
         write: pipelines[1],
         emulate_write_bugs: pipelines[2],
     };
 
-    let result = test_device(
+    if let Err(e) = test_device(
         &device,
         queue,
         cmd_bufs,
@@ -616,23 +639,10 @@ fn prepare_and_test_device(
         &selected.label,
         memory_props,
         env,
-    );
-    // Cleanup & Destruction
-    unsafe {
-        device.destroy_pipeline(pipelines.read, None);
-        device.destroy_pipeline(pipelines.write, None);
-        device.destroy_pipeline(pipelines.emulate_write_bugs, None);
-
-        device.destroy_pipeline_layout(pipeline_layout, None);
-
-        device.destroy_shader_module(shader_mod, None);
-
-        device.destroy_descriptor_set_layout(desc_layouts[0], None);
-        device.destroy_descriptor_pool(desc_pool, None);
-        device.destroy_command_pool(cmd_pool, None);
-        device.destroy_device(None);
+    ) {
+        display_this_process_result(Some(e), &env)
     }
-    result
+    display_this_process_result(None, &env)
 }
 
 fn test_device<Writer: std::io::Write>(
@@ -648,6 +658,9 @@ fn test_device<Writer: std::io::Write>(
     env: &ProcessEnv,
 ) -> Result<(), Box<dyn std::error::Error>> {
     let mut allocation_size = env.max_test_bytes;
+    if allocation_size < MIN_WANTED_ALLOCATION {
+        return Err("requested test size is smaller than minimum wanted".into());
+    }
 
     let io_data_size = mem::size_of::<IOBuf>() as vk::DeviceSize;
 
@@ -700,16 +713,19 @@ fn test_device<Writer: std::io::Write>(
         memory_requirements(&device, MIN_WANTED_ALLOCATION)?;
 
     let test_mem_index = (0..memory_props.memory_type_count)
-        .find(|i| {
+        .filter(|i| {
             //test buffer comptibility flags expressed as bitmask
             let suitable = (test_mem_reqs.memory_type_bits & (1 << i)) != 0;
             let memory_type = memory_props.memory_types[*i as usize];
-            let memory_heap = memory_props.memory_heaps[memory_type.heap_index as usize];
             suitable
-                && memory_heap.size as i64 >= allocation_size
                 && memory_type
                     .property_flags
                     .contains(vk::MemoryPropertyFlags::DEVICE_LOCAL)
+        })
+        .max_by_key(|mem_index| {
+            memory_props.memory_heaps
+                [memory_props.memory_types[*mem_index as usize].heap_index as usize]
+                .size as i64
         })
         .ok_or("DEVICE_LOCAL test memory type not available")?;
 
@@ -753,6 +769,9 @@ fn test_device<Writer: std::io::Write>(
         let test_memory_allocate_info = vk::MemoryAllocateInfoBuilder::new()
             .allocation_size(allocation_size as u64)
             .memory_type_index(test_mem_index);
+        if env.verbose {
+            println!("Trying {:7.3}GB buffer...", allocation_size as f32 / GB);
+        }
         match unsafe { device.allocate_memory(&test_memory_allocate_info, None) }
             .err_retry_with_lower_memory(env, "allocate_memory")
         {
@@ -1320,24 +1339,18 @@ fn test_in_this_process(mut loaded_devices: LoadedDevices, env: &ProcessEnv) -> 
     let LoadedDevices(instance, _, _, devices_labeled_from_1) = &mut loaded_devices;
     let selected_index = env.effective_index();
     if selected_index >= devices_labeled_from_1.len() {
-        display_this_process_result(Some("No device at given index".into()), env.interactive)
+        display_this_process_result(Some("No device at given index".into()), &env)
     }
 
     if env.max_test_bytes == 0 {
-        display_this_process_result(
-            Some("Failed determining memory budget".into()),
-            env.interactive,
-        )
+        display_this_process_result(Some("Failed determining memory budget".into()), &env)
     }
 
-    if let Err(e) = prepare_and_test_device(
+    prepare_and_test_device(
         &instance,
         devices_labeled_from_1.swap_remove(selected_index),
         env,
-    ) {
-        display_this_process_result(Some(e), env.interactive)
-    }
-    display_this_process_result(None, env.interactive)
+    )
 }
 
 enum SubprocessMode {
@@ -1552,7 +1565,7 @@ fn init_running_env() -> ProcessEnv {
 
 fn display_this_process_result(
     maybe_err: Option<Box<dyn std::error::Error>>,
-    interactive: bool,
+    env: &ProcessEnv,
 ) -> ! {
     if let Some(e) = maybe_err {
         println!("Runtime error: {e}");
@@ -1565,15 +1578,15 @@ fn display_this_process_result(
                 test_status: close::fetch_status(),
             },
         )),
-        interactive,
+        env,
     )
 }
 
 fn display_result(
     result: Result<(Option<LoadedDevices>, TestStatus), Box<dyn std::error::Error>>,
-    interactive: bool,
+    env: &ProcessEnv,
 ) -> ! {
-    if !interactive {
+    if !env.interactive {
         close::immediate_exit(false);
     }
     println!("");
@@ -1597,7 +1610,7 @@ fn display_result(
             } else {
                 let has_errors =
                     close::check_any_bits_set(status, close::app_status::RUNTIME_ERRORS);
-                if interactive {
+                if env.interactive {
                     key_reader.set_pass_fail_accent_color(has_errors);
                 }
                 match has_errors {
@@ -1607,7 +1620,7 @@ fn display_result(
             }
         }
     }
-    if interactive {
+    if env.interactive {
         key_reader.wait_any_key();
     }
     drop(key_reader); //restore terminal state before exiting
@@ -1620,5 +1633,5 @@ fn main() -> () {
     }
     let result = list_devices_ordered_labaled_from_1(env.verbose)
         .and_then(|loaded_devices| init_vk_and_check_errors(loaded_devices, &mut env));
-    display_result(result, env.interactive);
+    display_result(result, &env);
 }
