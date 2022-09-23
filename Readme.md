@@ -73,6 +73,22 @@ Runtime error: ERROR_DEVICE_LOST while getting () in context wait_for_fences
 ```
 ...hangs in-kernel due to driver
 
+
+Nvidia Jetson is supported by aarch64 binary
+```
+jetson-nx-alpha :: ~ » ./memtest_vulkan
+https://github.com/GpuZelenograd/memtest_vulkan v0.3.0 by GpuZelenograd
+To finish testing use Ctrl+C
+
+1: Bus=0x00:00 DevId=0xA5BA03D7   8GB NVIDIA Tegra Xavier (nvgpu)
+Testing 1: Bus=0x00:00 DevId=0xA5BA03D7   8GB NVIDIA Tegra Xavier (nvgpu)
+      1 iteration. Since last report passed 163.678336ms    written     2.4GB, read:     4.8GB     43.5GB/sec
+      7 iteration. Since last report passed 1.045756448s    written    14.2GB, read:    28.5GB     40.9GB/sec
+     61 iteration. Since last report passed 10.06722992s    written   128.2GB, read:   256.5GB     38.2GB/sec
+    593 iteration. Since last report passed 100.063183744s  written  1263.5GB, read:  2527.0GB     37.9GB/sec
+   1121 iteration. Since last report passed 100.043447136s  written  1254.0GB, read:  2508.0GB     37.6GB/sec
+```
+
 # License
 
 memtest_vulkan is licensed similar to `erupt` under the [zlib License](https://github.com/GpuZelenograd/memtest_vulkan/blob/main/LICENSE)
