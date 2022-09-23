@@ -1,5 +1,24 @@
 # Usage examples
 
+```
+C:\Users\vasiliy.galkin\Desktop\mv-3-release\x86_64-pc-windows-gnu>memtest_vulkan.exe
+https://github.com/GpuZelenograd/memtest_vulkan v0.3.0 by GpuZelenograd
+To finish testing use Ctrl+C
+
+1: Bus=0x00:00 DevId=0x9A49   8GB Intel(R) Iris(R) Xe Graphics
+Testing 1: Bus=0x00:00 DevId=0x9A49   8GB Intel(R) Iris(R) Xe Graphics
+      1 iteration. Since last report passed 271.3561ms      written     1.8GB, read:     3.5GB     19.3GB/sec
+      5 iteration. Since last report passed 1.0910091s      written     7.0GB, read:    14.0GB     19.2GB/sec
+     42 iteration. Since last report passed 10.2049349s     written    64.8GB, read:   129.5GB     19.0GB/sec
+    409 iteration. Since last report passed 100.2136744s    written   642.2GB, read:  1284.5GB     19.2GB/sec
+    791 iteration. Since last report passed 100.0165577s    written   668.5GB, read:  1337.0GB     20.1GB/sec
+   1173 iteration. Since last report passed 100.1249672s    written   668.5GB, read:  1337.0GB     20.0GB/sec
+   1551 iteration. Since last report passed 100.0042873s    written   661.5GB, read:  1323.0GB     19.8GB/sec
+(Ctrl-C pressed)
+memtest_vulkan: no any errors, testing PASSed.
+  press any key to continue...
+```
+
 Running with NVIDIA gpu under linux may require explicitely setting `VK_DRIVER_FILES` variable
 ```
 [user@host ~]$ VK_DRIVER_FILES=/usr/share/vulkan/icd.d/nvidia_icd.json ./memtest_vulkan
