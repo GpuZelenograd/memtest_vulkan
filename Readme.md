@@ -1,6 +1,6 @@
 # Usage examples
 
-Windows can be run by double-click or from cmdline
+Windows version can be run by double-click or from cmdline
 
 ```
 C:\Users\galkinvv\Desktop\x86_64-pc-windows-gnu>memtest_vulkan.exe
@@ -89,6 +89,9 @@ Testing 1: Bus=0x00:00 DevId=0xA5BA03D7   8GB NVIDIA Tegra Xavier (nvgpu)
      61 iteration. Since last report passed 10.06722992s    written   128.2GB, read:   256.5GB     38.2GB/sec
     593 iteration. Since last report passed 100.063183744s  written  1263.5GB, read:  2527.0GB     37.9GB/sec
    1121 iteration. Since last report passed 100.043447136s  written  1254.0GB, read:  2508.0GB     37.6GB/sec
+^C
+memtest_vulkan: no any errors, testing PASSed.
+  press any key to continue...
 ```
 
 # License
