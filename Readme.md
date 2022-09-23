@@ -1,7 +1,9 @@
 # Usage examples
 
+Windows can be run by double-click or from cmdline
+
 ```
-C:\Users\vasiliy.galkin\Desktop\mv-3-release\x86_64-pc-windows-gnu>memtest_vulkan.exe
+C:\Users\galkinvv\Desktop\x86_64-pc-windows-gnu>memtest_vulkan.exe
 https://github.com/GpuZelenograd/memtest_vulkan v0.3.0 by GpuZelenograd
 To finish testing use Ctrl+C
 
