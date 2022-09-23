@@ -1,5 +1,6 @@
-# example usage 
+# Usage examples
 
+Running with NVIDIA gpu under linux may require explicitely setting `VK_DRIVER_FILES` variable
 ```
 [user@host ~]$ VK_DRIVER_FILES=/usr/share/vulkan/icd.d/nvidia_icd.json ./memtest_vulkan
 https://github.com/GpuZelenograd/memtest_vulkan v0.3.0 by GpuZelenograd
@@ -16,6 +17,7 @@ memtest_vulkan: no any errors, testing PASSed.
   press any key to continue...
 ```
 
+Example run with a single-wire/singe-bit error
 ```
 [user@host ~]$ ./memtest_vulkan
 https://github.com/GpuZelenograd/memtest_vulkan v0.3.0 by GpuZelenograd
@@ -49,5 +51,9 @@ MemBiCnt                7|  43 285 15296317| 19k 50k 107k200k|326k483k 653k817k
 actual_ff: 0 actual_max: 0xFFFFFF46 actual_min: 0x000000B0 done_iter_or_err:4294967295 iter:2160 calc_param 0x8708AB91
 idxs:160443825-1006631935 first_elem: 0xE11572D0 0xC22AE5E1 0x8455CC43 0x08AB9987 
 Runtime error: ERROR_DEVICE_LOST while getting () in context wait_for_fences
-
 ```
+...hangs in-kernel due to driver
+
+# License
+
+memtest_vulkan is licensed similar to `erupt` under the [zlib License](https://github.com/GpuZelenograd/memtest_vulkan/blob/main/LICENSE)
