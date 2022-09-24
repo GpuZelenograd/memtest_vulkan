@@ -985,9 +985,9 @@ fn test_device<Writer: std::io::Write>(
                 next_report_duration = second1; //2nd report after 1 second
             } else if next_report_duration == second1 {
                 close::raise_status_bit(close::app_status::INITED_OK);
-                next_report_duration = second1 * 10; //3rd report after 10 seconds
+                next_report_duration = second1 * 5; //3rd report after 5 seconds
             } else {
-                next_report_duration = second1 * 100; //later reports every 100 seconds
+                next_report_duration = second1 * 30; //later reports every 30 seconds
             }
             writeln!(log_dupler, "{:7} iteration. Since last report passed {:15?} written {:7.1}GB, read: {:7.1}GB   {:6.1}GB/sec", iteration, elapsed, written_bytes as f32 / GB, read_bytes as f32 / GB, speed_gbps)?;
             if env.verbose {
