@@ -67,12 +67,16 @@ fn test_value_by_index(i:u32)->vec4<u32>
     return rotated;
 }
 
+
+let TEST_WINDOW_1D_MAX_GROUPS: u32 = 0x8000u;
+let TEST_WINDOW_READ_ADDR_ROTATION_GRANULARITY: u32 = 0x2000u;//don't inner-multiply by window size
+
 @compute @workgroup_size(64, 1, 1)
 fn read(@builtin(global_invocation_id) global_invocation_id: vec3<u32>) {
-    let TEST_WINDOW_READ_ADDR_ROTATION_GRANULARITY: u32 = 0x2000u;//don't inner-multiply by window size
-    let addr_mod = global_invocation_id[0] % TEST_WINDOW_READ_ADDR_ROTATION_GRANULARITY;
-    let new_mod = (11 * global_invocation_id[0] + 999 * io.iter + io.calc_param +  7 * (global_invocation_id[0] / TEST_WINDOW_READ_ADDR_ROTATION_GRANULARITY)) % TEST_WINDOW_READ_ADDR_ROTATION_GRANULARITY;
-    let effective_addr = global_invocation_id[0] - addr_mod + new_mod; //make read order a bit rotated, not strictly sequential
+    let effective_invocation_id: u32 = global_invocation_id[0] + global_invocation_id[1] * TEST_WINDOW_1D_MAX_GROUPS;
+    let addr_mod = effective_invocation_id % TEST_WINDOW_READ_ADDR_ROTATION_GRANULARITY;
+    let new_mod = (11 * effective_invocation_id + 999 * io.iter + io.calc_param +  7 * (effective_invocation_id / TEST_WINDOW_READ_ADDR_ROTATION_GRANULARITY)) % TEST_WINDOW_READ_ADDR_ROTATION_GRANULARITY;
+    let effective_addr = effective_invocation_id - addr_mod + new_mod; //make read order a bit rotated, not strictly sequential
     let actual_value : vec4<u32> = test[effective_addr];
     let expected_value : vec4<u32> = test_value_by_index(effective_addr);
     if any(actual_value != expected_value) {
@@ -117,18 +121,20 @@ fn read(@builtin(global_invocation_id) global_invocation_id: vec3<u32>) {
 
 @compute @workgroup_size(64, 1, 1)
 fn write(@builtin(global_invocation_id) global_invocation_id: vec3<u32>) {
+    let effective_invocation_id: u32 = global_invocation_id[0] + global_invocation_id[1] * TEST_WINDOW_1D_MAX_GROUPS;
     //make global_invocation_id processing specific memory addr different on writing compared to reading
-    let TEST_WINDOW_SIZE_GRANULARITY: u32 = 64u * 0x20000u;//don't inner-multiply by window size
-    let proccessed_mod = global_invocation_id[0] % TEST_WINDOW_SIZE_GRANULARITY;
-    let proccessed_idx = global_invocation_id[0] + TEST_WINDOW_SIZE_GRANULARITY - 2 * proccessed_mod - 1;
+    let TEST_WINDOW_SIZE_GRANULARITY: u32 = 64u * 4u * TEST_WINDOW_1D_MAX_GROUPS;//don't inner-multiply by window size
+    let proccessed_mod = effective_invocation_id % TEST_WINDOW_SIZE_GRANULARITY;
+    let proccessed_idx = effective_invocation_id + TEST_WINDOW_SIZE_GRANULARITY - 2 * proccessed_mod - 1;
     test[proccessed_idx] = test_value_by_index(proccessed_idx);
 }
 
 @compute @workgroup_size(64, 1, 1)
 fn emulate_write_bugs(@builtin(global_invocation_id) global_invocation_id: vec3<u32>) {
-    let TEST_WINDOW_SIZE_GRANULARITY: u32 = 64u * 0x20000u;//don't inner-multiply by window size
-    let proccessed_mod = global_invocation_id[0] % TEST_WINDOW_SIZE_GRANULARITY;
-    let proccessed_idx = global_invocation_id[0] + TEST_WINDOW_SIZE_GRANULARITY - 2 * proccessed_mod - 1;
+    let effective_invocation_id: u32 = global_invocation_id[0] + global_invocation_id[1] * TEST_WINDOW_1D_MAX_GROUPS;
+    let TEST_WINDOW_SIZE_GRANULARITY: u32 = 64u * 4u * TEST_WINDOW_1D_MAX_GROUPS;//don't inner-multiply by window size
+    let proccessed_mod = effective_invocation_id % TEST_WINDOW_SIZE_GRANULARITY;
+    let proccessed_idx = effective_invocation_id + TEST_WINDOW_SIZE_GRANULARITY - 2 * proccessed_mod - 1;
     test[proccessed_idx] = test_value_by_index(proccessed_idx);
     if proccessed_idx == 0xADBA {
         test[proccessed_idx][1] ^= 0x400000u;//error simulation for test
@@ -141,8 +147,10 @@ const WG_SIZE: i64 = 64;
 const VEC_SIZE: usize = 4; //vector processed by single workgroup item
 const ELEMENT_SIZE: i64 = std::mem::size_of::<u32>() as i64;
 const ELEMENT_BIT_SIZE: usize = (ELEMENT_SIZE * 8) as usize;
-const TEST_WINDOW_SIZE_GRANULARITY: i64 = VEC_SIZE as i64 * WG_SIZE * ELEMENT_SIZE * 0x20000 as i64;
-const TEST_WINDOW_MAX_SIZE: i64 = 4 * 1024 * 1024 * 1024 - TEST_WINDOW_SIZE_GRANULARITY;
+const TEST_WINDOW_1D_MAX_GROUPS: i64 = 0x8000;
+const TEST_WINDOW_SIZE_GRANULARITY: i64 =
+    VEC_SIZE as i64 * WG_SIZE * ELEMENT_SIZE * TEST_WINDOW_1D_MAX_GROUPS * 4 as i64;
+const TEST_WINDOW_MAX_SIZE: i64 = 2 * 1024 * 1024 * 1024 - TEST_WINDOW_SIZE_GRANULARITY;
 const TEST_DATA_KEEP_FREE: i64 = 400 * 1024 * 1024;
 const MIN_WANTED_ALLOCATION: i64 = TEST_DATA_KEEP_FREE;
 const ALLOCATION_TRY_STEP: i64 = TEST_DATA_KEEP_FREE;
@@ -828,8 +836,8 @@ fn test_device<Writer: std::io::Write>(
                                         );
                                         device.cmd_dispatch(
                                             cmd_buf,
-                                            test_element_count / WG_SIZE as u32 / VEC_SIZE as u32,
-                                            1,
+                                            (TEST_WINDOW_1D_MAX_GROUPS / WG_SIZE) as u32,
+                                            test_element_count / VEC_SIZE as u32 / TEST_WINDOW_1D_MAX_GROUPS as u32,
                                             1,
                                         );
                                         device.end_command_buffer(cmd_buf).err_retry_with_lower_memory(env, "end_command_buffer")?;
