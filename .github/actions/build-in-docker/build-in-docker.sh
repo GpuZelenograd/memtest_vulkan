@@ -3,7 +3,7 @@ id
 pwd
 ls
 set
-source "/root/.cargo/env"
+export PATH=/root/.cargo/bin:$PATH
 cargo --list
 rustup target list
 cargo build --release --target x86_64-pc-windows-gnu
