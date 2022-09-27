@@ -244,18 +244,16 @@ impl fmt::Display for IOBuf {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         writeln!(
             f,
+            "values range: 0x{:08X}..=0x{:08X}   FFFFFFFF-like count:{}    bit-level stats table:",
+            self.actual_max, self.actual_min, self.actual_ff
+        )?;
+        writeln!(
+            f,
             "         0x0 0x1  0x2 0x3| 0x4 0x5  0x6 0x7| 0x8 0x9  0xA 0xB| 0xC 0xD  0xE 0xF"
         )?;
-        write!(f, "Err1BIdx{}", self.err_bit1_idx)?;
-        write!(f, "ErrBiCnt{}", self.err_bitcount)?;
-        write!(f, "MemBiCnt{}", self.mem_bitcount)?;
-        writeln!(f, "actual_ff: {} actual_max: 0x{:08X} actual_min: 0x{:08X} done_iter_or_err:{} iter:{} calc_param 0x{:08X}",
-                self.actual_ff, self.actual_max, self.actual_min, self.done_iter_or_err, self.iter, self.calc_param)?;
-        write!(
-            f,
-            "idxs:{}-{} first_elem: {}",
-            self.idx_min, self.idx_max, self.first_elem
-        )?;
+        write!(f, "SinglIdx{}", self.err_bit1_idx)?;
+        write!(f, "TogglCnt{}", self.err_bitcount)?;
+        write!(f, "1sInValu{}", self.mem_bitcount)?;
         Ok(())
     }
 }
@@ -964,7 +962,11 @@ fn test_device<Writer: std::io::Write>(
                         total_errors as f64/test_elems as f64 * 100.0f64,
                         error_range,
                     )?;
-                    writeln!(log_dupler, "  deatils:\n{}", last_buffer_out)?;
+                    writeln!(
+                        log_dupler,
+                        "  iteration:{}\n{}",
+                        last_buffer_out.iter, last_buffer_out
+                    )?;
                 }
                 last_buffer_out.check_vec_first()?;
             }
