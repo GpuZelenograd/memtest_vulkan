@@ -1,9 +1,6 @@
 #!/bin/bash
-id
-pwd
-ls
-set
-export PATH=/root/.cargo/bin:$PATH
+export HOME=/root
+export PATH=$HOME/.cargo/bin:$PATH
 rustup default 1.64.0
 cargo --list
 rustup target list
