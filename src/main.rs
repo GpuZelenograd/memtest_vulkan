@@ -1613,7 +1613,9 @@ fn display_result(
             }
             if !close::check_any_bits_set(status, close::app_status::INITED_OK) {
                 println!("memtest_vulkan: INIT OR FIRST testing failed due to runtime error");
-            } else if close::check_any_bits_set(status, close::app_status::RUNTIME_ABORT) {
+            } else if close::check_any_bits_set(status, close::app_status::RUNTIME_ABORT)
+                && !close::check_any_bits_set(status, close::app_status::RUNTIME_ERRORS)
+            {
                 println!("memtest_vulkan: First test passed, but THEN runtime error occured");
             } else {
                 let has_errors =
