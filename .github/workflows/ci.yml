@@ -2,6 +2,8 @@ name: ci
 on:
   push:
     branches: [ main ]
+    tags:
+      - '**'
   pull_request:
     branches: [ main ]
 jobs:
@@ -12,5 +14,9 @@ jobs:
       - uses: ./.github/actions/build-in-docker
       - uses: actions/upload-artifact@v3
         with:
-          name: windows and linus binaries
-          path: target/artifacts/**
+          name: Windows .exe
+          path: target/artifacts/*.exe
+      - uses: actions/upload-artifact@v3
+        with:
+          name: Linux binaries (x86_64 and aarch64)
+          path: target/artifacts/*linux*
