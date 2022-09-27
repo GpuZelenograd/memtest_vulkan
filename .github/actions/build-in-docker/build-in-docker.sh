@@ -8,5 +8,5 @@ cargo build --release --target x86_64-unknown-linux-gnu
 cargo build --release --target aarch64-unknown-linux-gnu
 mkdir target/artifacts
 cp target/x86_64-pc-windows-gnu/release/memtest_vulkan.exe target/artifacts/memtest_vulkan-${GITHUB_REF_NAME}.exe
-tar cJf target/artifacts/x86_64-linux-memtest_vulkan-${GITHUB_REF_NAME}.tar.xz target/x86_64-unknown-linux-gnu/release/memtest_vulkan
-tar cJf target/artifacts/aarch64-linux-memtest_vulkan-${GITHUB_REF_NAME}.tar.xz target/aarch64-unknown-linux-gnu/release/memtest_vulkan
+tar cJf target/artifacts/x86_64-linux-memtest_vulkan-${GITHUB_REF_NAME}.tar.xz -C target/x86_64-unknown-linux-gnu/release memtest_vulkan
+tar cJf target/artifacts/aarch64-linux-memtest_vulkan-${GITHUB_REF_NAME}.tar.xz -C target/aarch64-unknown-linux-gnu/release memtest_vulkan
