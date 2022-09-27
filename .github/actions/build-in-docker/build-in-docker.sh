@@ -2,8 +2,11 @@
 export HOME=/root
 export PATH=$HOME/.cargo/bin:$PATH
 rustup default 1.64
+bash
 cargo build --release --target x86_64-pc-windows-gnu
 cargo build --release --target x86_64-unknown-linux-gnu
 cargo build --release --target aarch64-unknown-linux-gnu
-tar cjf target/x86_64-pc-windows-gnu/release/x86_64-linux-memtest_vulkan-${GITHUB_REF_NAME}.tar.xz target/x86_64-unknown-linux-gnu/release/memtest_vulkan
-tar cjf target/x86_64-pc-windows-gnu/release/aarch64-linux-memtest_vulkan-${GITHUB_REF_NAME}.tar.xz target/aarch64-unknown-linux-gnu/release/memtest_vulkan
+mkdir target/artifacts
+cp target/x86_64-pc-windows-gnu/release/memtest_vulkan.exe target/artifacts/memtest_vulkan-${GITHUB_REF_NAME}.exe
+tar cJf target/artifacts/x86_64-linux-memtest_vulkan-${GITHUB_REF_NAME}.tar.xz target/x86_64-unknown-linux-gnu/release/memtest_vulkan
+tar cJf target/artifacts/aarch64-linux-memtest_vulkan-${GITHUB_REF_NAME}.tar.xz target/aarch64-unknown-linux-gnu/release/memtest_vulkan
