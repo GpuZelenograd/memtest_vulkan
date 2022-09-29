@@ -7,6 +7,7 @@ Just start application, wait several minutes and stop testing by Ctrl+C. Detecte
 
 [Prebuilt binaries for windows and linux, including aarch64 NVidia Jetson](https://github.com//GpuZelenograd/memtest_vulkan/releases/)
 
+Requires system-provided vulkan loader and vulkan driver supporting Vulkan 1.1 (they are installed with graphics drivers on most OS).
 
 ## Usage examples
 
