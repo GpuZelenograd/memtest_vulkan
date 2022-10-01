@@ -1,4 +1,4 @@
-# [memtest_vulkan](https://github.com/GpuZelenograd/memtest_vulkan)
+# [memtest_vulkan](https://github.com/GpuZelenograd/memtest_vulkan/blob/main/Readme.md) - GPU memory testing tool
 
 Opensource tool written in vulkan compute to stress test video memory for stability during overclocking or repair.
 Developed as an alternative to OpenCL-based tool [memtestCL](https://github.com/ihaque/memtestCL)
