@@ -3,7 +3,7 @@
 Opensource tool written in vulkan compute to stress test video memory for stability during overclocking or repair.
 Developed as an alternative to OpenCL-based tool [memtestCL](https://github.com/ihaque/memtestCL)
 
-Just start application, wait several minutes and stop testing by Ctrl+C. Detected errors are displayed immediately during test run. Though the image below gives detailed descriptions for errors table - actually it is not needed for 90% os uses. Just run tool and see if errors are absent or present.
+Just start application, wait several minutes and stop testing by Ctrl+C. Detected errors are displayed immediately during test run. Though the image below gives detailed descriptions for errors table - actually it is not needed for 90% of uses. Just run tool and see if errors are absent or present.
 
 [Prebuilt binaries for windows and linux, including aarch64 NVidia Jetson](https://github.com//GpuZelenograd/memtest_vulkan/releases/)
 
