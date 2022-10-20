@@ -11,9 +11,12 @@ fn naga_compile(src: &str) -> Result<Vec<u32>, String> {
 
     let module = Parser::new().parse(src);
     let module = module.map_err(|e| e.emit_to_string(src))?;
-    let mut opts = naga::back::spv::Options::default();
-    opts.lang_version = (1, 3); // Vulkan 1.1 must support spirv 1.3
-    opts.flags = naga::back::spv::WriterFlags::DEBUG;
+
+    let opts = naga::back::spv::Options {
+        lang_version: (1, 3), // Vulkan 1.1 must support spirv 1.3
+        flags: naga::back::spv::WriterFlags::DEBUG,
+        ..Default::default()
+    };
 
     // Attempt to validate WGSL, error if invalid
     let info = Validator::new(ValidationFlags::all(), Capabilities::empty())

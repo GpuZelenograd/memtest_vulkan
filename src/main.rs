@@ -676,22 +676,25 @@ fn test_device<Writer: std::io::Write>(
         .size(io_data_size);
     let io_buffer = unsafe { device.create_buffer(&io_buffer_create_info, None) }.err_as_str()?;
     let io_mem_reqs = unsafe { device.get_buffer_memory_requirements(io_buffer) };
-    let io_mem_indices: Vec<_> = (0..memory_props.memory_type_count)
-        .filter(|i| {
-            //test buffer comptibility flags expressed as bitmask
-            let suitable = (io_mem_reqs.memory_type_bits & (1 << i)) != 0;
-            let memory_type = memory_props.memory_types[*i as usize];
-            if env.verbose && !memory_type.property_flags.is_empty() {
-                println!("{:2} {:?} ", i, memory_type);
-            }
-            suitable
-                && memory_type.property_flags.contains(
-                    vk::MemoryPropertyFlags::DEVICE_LOCAL
-                        | vk::MemoryPropertyFlags::HOST_VISIBLE
-                        | vk::MemoryPropertyFlags::HOST_COHERENT,
-                )
-        })
-        .collect();
+    let mut io_mem_indices = Vec::new();
+    for i in 0..memory_props.memory_type_count {
+        //test buffer comptibility flags expressed as bitmask
+        let suitable = (io_mem_reqs.memory_type_bits & (1 << i)) != 0;
+        let memory_type = memory_props.memory_types[i as usize];
+        if env.verbose && !memory_type.property_flags.is_empty() {
+            println!("{:2} {:?} ", i, memory_type);
+        }
+        if suitable
+            && memory_type.property_flags.contains(
+                vk::MemoryPropertyFlags::DEVICE_LOCAL
+                    | vk::MemoryPropertyFlags::HOST_VISIBLE
+                    | vk::MemoryPropertyFlags::HOST_COHERENT,
+            )
+        {
+            io_mem_indices.push(i);
+        }
+    }
+
     // sorting by a flag value allows selection of index with the minimum count of new unknown flags
     let io_mem_index = io_mem_indices
         .into_iter()
@@ -861,19 +864,15 @@ fn test_device<Writer: std::io::Write>(
                                 let mut overall_exec_result = Ok(());
                                 'window: for window_idx in 0..test_window_count {
                                     let test_offset = test_window_size * window_idx;
-                                    match execute_wait_queue(test_offset, pipelines.write) {
-                                        Err(e) => {
-                                            overall_exec_result = Err(e);
-                                            break 'window;
-                                        }
-                                        Ok(()) => {}
+                                    if let Err(e) = execute_wait_queue(test_offset, pipelines.write)
+                                    {
+                                        overall_exec_result = Err(e);
+                                        break 'window;
                                     }
-                                    match execute_wait_queue(test_offset, pipelines.read) {
-                                        Err(e) => {
-                                            overall_exec_result = Err(e);
-                                            break 'window;
-                                        }
-                                        Ok(()) => {}
+                                    if let Err(e) = execute_wait_queue(test_offset, pipelines.read)
+                                    {
+                                        overall_exec_result = Err(e);
+                                        break 'window;
                                     }
                                 }
                                 match overall_exec_result {
@@ -982,12 +981,11 @@ fn test_device<Writer: std::io::Write>(
         let stop_testing = close::close_requested();
         if elapsed > next_report_duration || stop_testing {
             let passed_secs = elapsed.as_secs_f32();
-            let speed_gbps;
-            if passed_secs > 0.0001 {
-                speed_gbps = (written_bytes + read_bytes) as f32 / GB / passed_secs;
+            let speed_gbps = if passed_secs > 0.0001 {
+                (written_bytes + read_bytes) as f32 / GB / passed_secs
             } else {
-                speed_gbps = 0f32;
-            }
+                0f32
+            };
             let second1 = time::Duration::from_secs(1);
             if next_report_duration.is_zero() {
                 writeln!(log_dupler, "Testing {}", selected_label)?;
@@ -1097,9 +1095,7 @@ fn load_instance(
         println!();
     }
 
-    let mut instance_extensions = Vec::new();
-
-    instance_extensions.push(ext_debug_utils::EXT_DEBUG_UTILS_EXTENSION_NAME);
+    let instance_extensions = vec![ext_debug_utils::EXT_DEBUG_UTILS_EXTENSION_NAME];
 
     let app_info = vk::ApplicationInfoBuilder::new().api_version(vk::API_VERSION_1_1);
     let instance_create_info = vk::InstanceCreateInfoBuilder::new()
@@ -1530,8 +1526,10 @@ impl ProcessEnv {
 }
 
 fn init_running_env() -> ProcessEnv {
-    let mut process_env = ProcessEnv::default();
-    process_env.verbose = cfg!(feature = "verbose");
+    let mut process_env = ProcessEnv {
+        verbose: cfg!(feature = "verbose"),
+        ..Default::default()
+    };
     let mut args_os_iter = std::env::args_os();
     if let Some(argv0) = args_os_iter.next() {
         if let Some(file_stem) = std::path::PathBuf::from(&argv0)

@@ -88,14 +88,14 @@ impl Reader {
             //interaction methods not available while closing on windows
             let seconds_wait = 3;
             let mut out = std::io::stdout();
-            if let Err(_) = write!(out, "Closing in {seconds_wait} seconds: ") {
+            if write!(out, "Closing in {seconds_wait} seconds: ").is_err() {
                 return;
             }
             for i in (1..=seconds_wait).rev() {
-                if let Err(_) = write!(out, "{i}... ") {
+                if write!(out, "{i}... ").is_err() {
                     return;
                 }
-                if let Err(_) = out.flush() {
+                if out.flush().is_err() {
                     return;
                 }
                 std::thread::sleep(std::time::Duration::from_secs(1));
