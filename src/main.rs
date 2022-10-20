@@ -676,11 +676,14 @@ fn test_device<Writer: std::io::Write>(
         .size(io_data_size);
     let io_buffer = unsafe { device.create_buffer(&io_buffer_create_info, None) }.err_as_str()?;
     let io_mem_reqs = unsafe { device.get_buffer_memory_requirements(io_buffer) };
-    let io_mem_index = (0..memory_props.memory_type_count)
-        .find(|i| {
+    let io_mem_indices: Vec<_> = (0..memory_props.memory_type_count)
+        .filter(|i| {
             //test buffer comptibility flags expressed as bitmask
             let suitable = (io_mem_reqs.memory_type_bits & (1 << i)) != 0;
             let memory_type = memory_props.memory_types[*i as usize];
+            if env.verbose && !memory_type.property_flags.is_empty() {
+                println!("{:2} {:?} ", i, memory_type);
+            }
             suitable
                 && memory_type.property_flags.contains(
                     vk::MemoryPropertyFlags::DEVICE_LOCAL
@@ -688,12 +691,16 @@ fn test_device<Writer: std::io::Write>(
                         | vk::MemoryPropertyFlags::HOST_COHERENT,
                 )
         })
-        .ok_or("DEVICE_LOCAL | HOST_COHERENT memory type not available")?;
+        .collect();
+    // sorting by a flag value allows selection of index with the minimum count of new unknown flags
+    let io_mem_index = io_mem_indices
+        .into_iter()
+        .min_by_key(|i| memory_props.memory_types[*i as usize].property_flags)
+        .ok_or("This device lacks support for DEVICE_LOCAL+HOST_COHERENT memory type.")?;
     if env.verbose {
         println!(
-            "IO memory                  type {}: {:?} heap {:?}",
+            "CoherentIO memory          type {} inside heap {:?}",
             io_mem_index,
-            memory_props.memory_types[io_mem_index as usize],
             memory_props.memory_heaps
                 [memory_props.memory_types[io_mem_index as usize].heap_index as usize]
         );
