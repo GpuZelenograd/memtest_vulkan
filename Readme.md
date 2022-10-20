@@ -109,6 +109,14 @@ memtest_vulkan: no any errors, testing PASSed.
   press any key to continue...
 ```
 
+## Troubleshooting & reporting issues
+
+If the test fails to start and shows `memtest_vulkan: INIT OR FIRST testing failed due to runtime error` for a compatible GPU there is some incompatibility
+in vulkan installation. If multiple ICD's are install a specific one may be specified by setting environment variable like `VK_DRIVER_FILES=/usr/share/vulkan/icd.d/nvidia_icd.json`.
+Also try running with root/admin privileges - this is sometimes required on headless devices.
+
+If this doesn't help - enable verbose mode by renaming the executable to `memtest_vulkan_verbose` and running again. The test will output diagnostic information to stdout - please copy it to a new issue at https://github.com/GpuZelenograd/memtest_vulkan/issues.
+
 ## License
 
 memtest_vulkan is licensed similar to `erupt` under the [zlib License](https://github.com/GpuZelenograd/memtest_vulkan/blob/main/LICENSE)
