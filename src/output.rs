@@ -61,10 +61,10 @@ impl<Writer: io::Write> LogDupler<Writer> {
         let mut initial_buf: Vec<u8> = Default::default();
         let _ = writeln!(&mut initial_buf, "logging started at {}", NowTime);
         Self {
-            writer: writer,
+            writer,
             log_file: None,
-            log_file_name: log_file_name,
-            max_size: max_size,
+            log_file_name,
+            max_size,
             unlogged_buffer: initial_buf.into(),
         }
     }
@@ -87,17 +87,17 @@ impl<Writer: io::Write> LogDupler<Writer> {
         let mut kept_buf = Vec::<_>::new();
 
         if let Some(file) = &self.log_file {
-            if let Ok(mut locked) = FileLock::wrap_exclusive(&file) {
+            if let Ok(mut locked) = FileLock::wrap_exclusive(file) {
                 let _ = locked.write_all(&self.unlogged_buffer.make_contiguous()[..len]);
                 if let Ok(metadata) = locked.metadata() {
                     let current_len = metadata.len();
                     if current_len > self.max_size {
                         let cut_len = current_len - self.max_size / 2u64;
-                        if locked.seek(SeekFrom::Start(cut_len)).is_ok() {
-                            if !locked.read_to_end(&mut kept_buf).is_ok() {
-                                kept_buf.clear();
-                                let _ = locked.seek(SeekFrom::End(0));
-                            }
+                        if locked.seek(SeekFrom::Start(cut_len)).is_ok()
+                            && locked.read_to_end(&mut kept_buf).is_err()
+                        {
+                            kept_buf.clear();
+                            let _ = locked.seek(SeekFrom::End(0));
                         }
                     }
                 }
@@ -114,14 +114,14 @@ impl<Writer: io::Write> LogDupler<Writer> {
             .write(true)
             .open(self.log_file_name.as_ref().unwrap())
         {
-            if !file_to_truncate.set_len(0).is_ok() {
+            if file_to_truncate.set_len(0).is_err() {
                 return;
             }
             drop(file_to_truncate);
         }
         self.try_open();
         if let Some(file) = &self.log_file {
-            if let Ok(mut locked) = FileLock::wrap_exclusive(&file) {
+            if let Ok(mut locked) = FileLock::wrap_exclusive(file) {
                 if locked.rewind().is_ok()
                     && write!(locked, "... earlier log truncated at {}", NowTime).is_ok()
                 {
@@ -129,7 +129,7 @@ impl<Writer: io::Write> LogDupler<Writer> {
                         if let Some(line_end_pos) = kept_buf.iter().position(|c| c == &b'\n') {
                             locked.write_all(&kept_buf[line_end_pos..])
                         } else {
-                            writeln!(locked, "")
+                            writeln!(locked)
                         }
                     };
                 }
@@ -145,7 +145,7 @@ impl<Writer: io::Write> Drop for LogDupler<Writer> {
         self.unlogged_buffer.extend(final_buf);
         let _ = self.flush();
         if let Some(file) = &self.log_file {
-            if let Ok(locked) = FileLock::wrap_exclusive(&file) {
+            if let Ok(locked) = FileLock::wrap_exclusive(file) {
                 let _ = locked.sync_all();
             }
         }

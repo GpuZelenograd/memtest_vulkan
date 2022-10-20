@@ -18,18 +18,18 @@ pub fn raise_status_bit(bit: u8) {
 }
 
 pub fn fetch_status() -> u8 {
-    return APP_STATUS.load(SeqCst) & !app_status::SIGNATURE_MASK;
+    APP_STATUS.load(SeqCst) & !app_status::SIGNATURE_MASK
 }
 
 pub fn check_any_bits_set(value: u8, bits: u8) -> bool {
-    return (value & bits) != 0;
+    (value & bits) != 0
 }
 
 pub fn close_requested() -> bool {
     if check_any_bits_set(fetch_status(), app_status::QUIT_JOB_REQUESTED) {
         return true;
     }
-    return INTERRUPT_REQUESTED.swap(false, SeqCst);
+    INTERRUPT_REQUESTED.swap(false, SeqCst)
 }
 
 pub fn immediate_exit(raise_abort_flag: bool) -> ! {

@@ -149,7 +149,7 @@ const ELEMENT_SIZE: i64 = std::mem::size_of::<u32>() as i64;
 const ELEMENT_BIT_SIZE: usize = (ELEMENT_SIZE * 8) as usize;
 const TEST_WINDOW_1D_MAX_GROUPS: i64 = 0x4000;
 const TEST_WINDOW_SIZE_GRANULARITY: i64 =
-    VEC_SIZE as i64 * WG_SIZE * ELEMENT_SIZE * TEST_WINDOW_1D_MAX_GROUPS * 8 as i64;
+    VEC_SIZE as i64 * WG_SIZE * ELEMENT_SIZE * TEST_WINDOW_1D_MAX_GROUPS * 8_i64;
 const TEST_WINDOW_MAX_SIZE: i64 = 4 * 1024 * 1024 * 1024 - TEST_WINDOW_SIZE_GRANULARITY;
 const TEST_DATA_KEEP_FREE: i64 = 400 * 1024 * 1024;
 const MIN_WANTED_ALLOCATION: i64 = TEST_DATA_KEEP_FREE;
@@ -206,7 +206,7 @@ impl<const LEN: usize> fmt::Display for MostlyZeroArr<LEN> {
                 write!(f, "    ")?; //zero
             }
             if i % 16 == 15 {
-                writeln!(f, "")?;
+                writeln!(f)?;
             } else if i % 4 == 3 {
                 write!(f, "|")?;
             } else if i % 4 == 1 {
@@ -355,7 +355,7 @@ impl<T> MapErrStr for std::result::Result<T, erupt::LoaderError> {
                 erupt::LoaderError::VulkanError(result) => format!("{}", result),
             } + " while getting "
                 + std::any::type_name::<Self::ValueType>();
-            msg.to_string().into()
+            msg.into()
         })
     }
     fn err_as_str_context(
@@ -372,7 +372,7 @@ impl<T> MapErrStr for std::result::Result<T, erupt::LoaderError> {
                 + std::any::type_name::<Self::ValueType>()
                 + " in context "
                 + context;
-            msg.to_string().into()
+            msg.into()
         })
     }
 }
@@ -384,7 +384,7 @@ impl<T> MapErrStr for erupt::utils::VulkanResult<T> {
         result.map_err(|res| {
             let msg =
                 res.to_string() + " while getting " + std::any::type_name::<Self::ValueType>();
-            msg.to_string().into()
+            msg.into()
         })
     }
     fn err_as_str_context(
@@ -398,7 +398,7 @@ impl<T> MapErrStr for erupt::utils::VulkanResult<T> {
                 + std::any::type_name::<Self::ValueType>()
                 + " in context "
                 + context;
-            msg.to_string().into()
+            msg.into()
         })
     }
 }
@@ -425,7 +425,7 @@ impl<T> MapErrRetryWithLowerMemory for erupt::utils::VulkanResult<T> {
                 //immediate exit in non-interactive during init to initiate try with lower memory
                 close::immediate_exit(true);
             }
-            msg.to_string().into()
+            msg.into()
         })
     }
 }
@@ -547,12 +547,12 @@ fn prepare_and_test_device(
 
     let memory_props =
         unsafe { instance.get_physical_device_memory_properties(selected.physical_device) };
-    let device = match unsafe {
-        DeviceLoader::new(&instance, selected.physical_device, &device_create_info)
-    } {
-        Ok(device) => device,
-        Err(e) => display_this_process_result(Some(e.into()), env),
-    };
+    let device =
+        match unsafe { DeviceLoader::new(instance, selected.physical_device, &device_create_info) }
+        {
+            Ok(device) => device,
+            Err(e) => display_this_process_result(Some(e.into()), env),
+        };
     let queue = unsafe { device.get_device_queue(selected.queue_family_index, 0) };
 
     let cmd_pool_info = vk::CommandPoolCreateInfoBuilder::new()
@@ -646,9 +646,9 @@ fn prepare_and_test_device(
         memory_props,
         env,
     ) {
-        display_this_process_result(Some(e), &env)
+        display_this_process_result(Some(e), env)
     }
-    display_this_process_result(None, &env)
+    display_this_process_result(None, env)
 }
 
 fn test_device<Writer: std::io::Write>(
@@ -723,7 +723,7 @@ fn test_device<Writer: std::io::Write>(
         .err_as_str_context("bind_buffer_memory")?;
 
     let (test_mem_reqs, test_buffer_create_info) =
-        memory_requirements(&device, MIN_WANTED_ALLOCATION)?;
+        memory_requirements(device, MIN_WANTED_ALLOCATION)?;
 
     let test_mem_index = (0..memory_props.memory_type_count)
         .filter(|i| {
@@ -773,7 +773,7 @@ fn test_device<Writer: std::io::Write>(
     let mut last_err: Box<dyn std::error::Error> =
         "No heap reports memory enough for testing".into();
     'memsize: loop {
-        free_test_mem_and_buffers(&device, &mut test_buffer, &mut test_memory);
+        free_test_mem_and_buffers(device, &mut test_buffer, &mut test_memory);
 
         if allocation_size < MIN_WANTED_ALLOCATION {
             return Err(last_err);
@@ -925,7 +925,7 @@ fn test_device<Writer: std::io::Write>(
         for window_idx in 1..test_window_count {
             let test_offset = test_window_size * window_idx;
             unsafe {
-                (*mapped).calc_param = buffer_in.calc_param + window_idx as u32 * 0x81 as u32;
+                (*mapped).calc_param = buffer_in.calc_param + window_idx as u32 * 0x81_u32;
             }
             execute_wait_queue(test_offset, pipelines.write)?; //use emulate_write_bugs for error simulation
             written_bytes += test_window_size;
@@ -934,7 +934,7 @@ fn test_device<Writer: std::io::Write>(
         for window_idx in 0..test_window_count {
             let reread_mode_for_this_win = window_idx == 0;
             buffer_in.set_calc_param_for_starting_window();
-            buffer_in.calc_param += window_idx as u32 * 0x81 as u32;
+            buffer_in.calc_param += window_idx as u32 * 0x81_u32;
             unsafe {
                 std::ptr::write(
                     mapped,
@@ -1016,7 +1016,7 @@ fn test_device<Writer: std::io::Write>(
     unsafe {
         device.device_wait_idle().err_as_str()?;
 
-        free_test_mem_and_buffers(&device, &mut test_buffer, &mut test_memory);
+        free_test_mem_and_buffers(device, &mut test_buffer, &mut test_memory);
 
         device.destroy_buffer(io_buffer, None);
         device.unmap_memory(io_memory);
@@ -1295,7 +1295,7 @@ fn prompt_for_label(verbose: bool) -> Option<usize> {
         let formatted_prompt: String;
         if let Some(effective_duration) = prompt_duration {
             if effective_duration < prompt_start.elapsed() {
-                println!("");
+                println!();
                 println!("    ...first device autoselected");
                 break;
             } else {
@@ -1310,7 +1310,7 @@ fn prompt_for_label(verbose: bool) -> Option<usize> {
         match input_reader.input_digit_step(prompt, &time::Duration::from_millis(250)) {
             Ok(input::ReaderEvent::Edited) => prompt_duration = None,
             Ok(input::ReaderEvent::Canceled) => {
-                println!("");
+                println!();
                 device_test_index = None;
                 break;
             }
@@ -1320,13 +1320,13 @@ fn prompt_for_label(verbose: bool) -> Option<usize> {
                 {
                     true => {
                         //empty or all zeroes
-                        println!("");
+                        println!();
                         println!("    ...testing default device confirmed");
                     }
                     false => match input_reader.current_input.parse::<usize>() {
                         Ok(parsed_idx) => {
                             device_test_index = Some(parsed_idx);
-                            println!("");
+                            println!();
                         }
                         Err(_) => {
                             input_reader.current_input.clear();
@@ -1356,15 +1356,15 @@ fn test_in_this_process(mut loaded_devices: LoadedDevices, env: &ProcessEnv) -> 
     let LoadedDevices(instance, _, _, devices_labeled_from_1) = &mut loaded_devices;
     let selected_index = env.effective_index();
     if selected_index >= devices_labeled_from_1.len() {
-        display_this_process_result(Some("No device at given index".into()), &env)
+        display_this_process_result(Some("No device at given index".into()), env)
     }
 
     if env.max_test_bytes == 0 {
-        display_this_process_result(Some("Failed determining memory budget".into()), &env)
+        display_this_process_result(Some("Failed determining memory budget".into()), env)
     }
 
     prepare_and_test_device(
-        &instance,
+        instance,
         devices_labeled_from_1.swap_remove(selected_index),
         env,
     )
@@ -1504,10 +1504,10 @@ fn init_vk_and_check_errors(
     }
     if let Some(selected_label) = env.device_label {
         try_fill_default_mem_budget(&loaded_devices, env);
-        let test_result = test_selected_label(loaded_devices, env, selected_label);
-        return test_result;
+
+        test_selected_label(loaded_devices, env, selected_label)
     } else {
-        return Err("Test cancelled, no device selected".into());
+        Err("Test cancelled, no device selected".into())
     }
 }
 
@@ -1536,8 +1536,7 @@ fn init_running_env() -> ProcessEnv {
     if let Some(argv0) = args_os_iter.next() {
         if let Some(file_stem) = std::path::PathBuf::from(&argv0)
             .file_stem()
-            .map(|os_str| os_str.to_str())
-            .flatten()
+            .and_then(|os_str| os_str.to_str())
         {
             process_env.verbose |= file_stem.to_ascii_lowercase().contains("verbose");
         }
@@ -1546,8 +1545,7 @@ fn init_running_env() -> ProcessEnv {
         if let Some(argv1_label_str) = args_os_iter
             .next()
             .as_ref()
-            .map(|os_str| os_str.to_str())
-            .flatten()
+            .and_then(|os_str| os_str.to_str())
         {
             if let Ok(label_parsed) = argv1_label_str.parse::<usize>() {
                 process_env.interactive = false;
@@ -1556,8 +1554,7 @@ fn init_running_env() -> ProcessEnv {
             if let Some(argv2_mem_max_str) = args_os_iter
                 .next()
                 .as_ref()
-                .map(|os_str| os_str.to_str())
-                .flatten()
+                .and_then(|os_str| os_str.to_str())
             {
                 if let Ok(mem_max_parsed) = argv2_mem_max_str.parse::<i64>() {
                     process_env.max_test_bytes = mem_max_parsed;
@@ -1606,7 +1603,7 @@ fn display_result(
     if !env.interactive {
         close::immediate_exit(false);
     }
-    println!("");
+    println!();
     let mut key_reader = input::Reader::default();
     match result {
         Err(e) => println!("memtest_vulkan: early exit during init: {e}"),
@@ -1645,7 +1642,7 @@ fn display_result(
     drop(key_reader); //restore terminal state before exiting
     close::immediate_exit(false)
 }
-fn main() -> () {
+fn main() {
     let mut env = init_running_env();
     if !env.interactive {
         close::setup_handler(false);
