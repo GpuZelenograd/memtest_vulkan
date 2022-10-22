@@ -739,9 +739,10 @@ fn test_device<Writer: std::io::Write>(
                     .contains(vk::MemoryPropertyFlags::DEVICE_LOCAL)
         })
         .max_by_key(|mem_index| {
-            memory_props.memory_heaps
-                [memory_props.memory_types[*mem_index as usize].heap_index as usize]
-                .size as i64
+            let mem_type = memory_props.memory_types[*mem_index as usize];
+            let heap_size = memory_props.memory_heaps[mem_type.heap_index as usize].size;
+            // Among greatest heap_size select index with the minimum count of unknown flags
+            (heap_size, std::cmp::Reverse(mem_type.property_flags))
         })
         .ok_or("DEVICE_LOCAL test memory type not available")?;
 
