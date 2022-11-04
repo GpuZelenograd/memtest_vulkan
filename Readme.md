@@ -3,9 +3,9 @@
 Opensource tool written in vulkan compute to stress test video memory for stability during overclocking or repair.
 Developed as an alternative to OpenCL-based tool [memtestCL](https://github.com/ihaque/memtestCL)
 
-Just start application, wait several minutes and stop testing by Ctrl+C. Detected errors are displayed immediately during test run. Though the image below gives detailed descriptions for errors table - actually it is not needed for 90% of uses. Just run tool and see if errors are absent or present.
+Just start application, wait several minutes and stop testing by Ctrl+C. Detected errors are displayed immediately during test run. Though the image below gives detailed descriptions for errors table - actually it is not needed for 90% of uses. Just run the tool and see if errors are absent or present.
 
-[Prebuilt binaries for windows and linux, including aarch64 NVidia Jetson](https://github.com//GpuZelenograd/memtest_vulkan/releases/)
+[Prebuilt binaries for windows and linux, including aarch64 NVIDIA Jetson](https://github.com//GpuZelenograd/memtest_vulkan/releases/)
 
 Requires system-provided vulkan loader and vulkan driver supporting Vulkan 1.1 (they are installed with graphics drivers on most OS).
 Also requires support of `DEVICE_LOCAL+HOST_COHERENT` memory type from the compute device.
@@ -18,7 +18,7 @@ Windows version can be started by double-click
 
 The example above was stopped by Ctrl+C after showing first error.
 
-Example windows run from cmdline without errors:
+Example run from windows command line without errors:
 ```
 C:\Users\galkinvv\Desktop\x86_64-pc-windows-gnu>memtest_vulkan.exe
 https://github.com/GpuZelenograd/memtest_vulkan v0.3.0 by GpuZelenograd
@@ -38,7 +38,7 @@ memtest_vulkan: no any errors, testing PASSed.
   press any key to continue...
 ```
 
-Running with NVIDIA gpu under linux may require explicitely setting `VK_DRIVER_FILES` variable
+Running with NVIDIA gpu under linux may require explicitly setting `VK_DRIVER_FILES` variable
 ```
 [user@host ~]$ VK_DRIVER_FILES=/usr/share/vulkan/icd.d/nvidia_icd.json ./memtest_vulkan
 https://github.com/GpuZelenograd/memtest_vulkan v0.3.0 by GpuZelenograd
@@ -91,7 +91,7 @@ Runtime error: ERROR_DEVICE_LOST while getting () in context wait_for_fences
 ...hangs in-kernel due to driver
 
 
-Nvidia Jetson is supported by aarch64 binary
+Jetson is supported by aarch64 binary
 ```
 jetson-nx-alpha :: ~ » ./memtest_vulkan
 https://github.com/GpuZelenograd/memtest_vulkan v0.3.0 by GpuZelenograd
@@ -109,7 +109,7 @@ memtest_vulkan: no any errors, testing PASSed.
   press any key to continue...
 ```
 
-## <a id="troubleshooting">Troubleshooting & reporting issues</a>
+## <a id="troubleshooting">Troubleshooting & reporting bugs</a>
 
 If the test fails to start and shows `memtest_vulkan: INIT OR FIRST testing failed due to runtime error` for a known to be vulkan-compatible GPU there is some incompatibility in vulkan installation. Sometimes this is caused by conflicts between several vulkan drivers installed. Since version v1.3.207 [Khronos vulkan loader supports selecting exact driver with `VK_DRIVER_FILES` environment variable](https://github.com/KhronosGroup/Vulkan-Loader/blob/v1.3.233/docs/LoaderInterfaceArchitecture.md#table-of-debug-environment-variables).
 
@@ -118,21 +118,29 @@ Also try running with root/admin privileges - this is sometimes required on head
 
 If neither method helps - enable verbose mode by renaming the executable to `memtest_vulkan_verbose` and running again. The test will output diagnostic information to stdout - please copy it to a new issue at https://github.com/GpuZelenograd/memtest_vulkan/issues.
 
-## New feature development
+## <a id="development">New feature development</a>
 
+New ideas in the form of [suggestions via creating issues](https://github.com/GpuZelenograd/memtest_vulkan/issues) or pull requests are welcome. However, note that the tool is designed to be cross-platform, so an optimal way to add temperature and hardware monitoring is [relying on VK_KHR_performance_query extension](https://registry.khronos.org/vulkan/specs/1.3-extensions/man/html/VkPerformanceCounterUnitKHR.html), but unfortunately this extension isn't widely supported by 2022.
 
+If you want to experiment with code modifications, there are two ways to do this:
+ - the classic way of cloning repo, editing code and use locally-installed `cargo` to build binaries from modified rust source code
+ - or the "fast way to make a small change relying on the github infrastructure". This can be useful if you are not familiar with building rust and don't plan to install it locally
+      - fork this repository
+      - enable workflows on the actions tab of the forked repository
+      - edit&commit code changes (small changes are possible even via editing with a browser)
+      - and github will build the binary from your changes for you as the artifacts on the actions tab!
 
 ## License
 
 memtest_vulkan is licensed similar to `erupt` under the [zlib License](https://github.com/GpuZelenograd/memtest_vulkan/blob/main/LICENSE)
 
-## Memory error kinds (theory)
+## Video card memory error kinds (theory)
 
 * The single-bit errors like in an [image above](#usage_screenshot). Such errors are counted in ToggleCnt column 0x01 and the exact bit indices are counted in SingleIdx column. Such errors may be detected by EDC in theory if they occur during transmitting by EDC-enabled part of GPU<->memory wire. But I'm not sure if EDC helps if they occure when transmitting between gpu cache and gpu core or something like this.
 * The errors on data-inversion bit (if not detected by EDC). Those should be counted in ToggleCnt columns 0x07/0x08 without SingleIdx info for them.
 * The multi-bit transmission errors. Those should be counted in ToggleCnt columns above 0x01, without SingleIdx info for them.
-* The errors flipped in the memory chips itself during data storage/"refresh cycles". This may be caused by too big period of refresh or other problems. memtest_vulkan uses a part of memory in a "write once at start but reread everytime" pattern - it is the reason fot read GB is more then written GB. If a data flips inside this part of memory - there would be infinite log of error messages marked with "Mode NEXT_RE_READ" (in oppposite to Mode INITIAL_READ). Lowering the clocks without restarting test doesn't get rid of such errors.
-* The errors on the address-transmission bus. The metest_vulkan is designed to perform reads to the non-sequential series of medium-sized sequential blocks. And if the address is wrongly interpreted by a memory chip - the result is completely garbage from wromg cell. Data-bus EDC can't help here. Those errors typically gives completely random error patterns with normal distribution of bits count and flipped bits (so typical number of flipped bits are 12-20 of 32 and getting 1 flipped bit for this case is extremely unrelalistic). The result looks like
+* The errors flipped in the memory chips itself during data storage/"refresh cycles". This may be caused by too big period of refresh or other problems. memtest_vulkan uses a part of memory in a "write once at start but reread every time" pattern - it is the reason fot read GB is more then written GB. If a data flips inside this part of memory - there would be infinite log of error messages marked with "Mode NEXT_RE_READ" (in opposite to Mode INITIAL_READ). Lowering the clocks without restarting test doesn't get rid of such errors.
+* The errors on the address-transmission bus. The metest_vulkan is designed to perform reads to the non-sequential series of medium-sized sequential blocks. And if the address is wrongly interpreted by a memory chip - the result is completely garbage from wrong cell. Data-bus EDC can't help here. Those errors typically gives completely random error patterns with normal distribution of bits count and flipped bits (so typical number of flipped bits are 12-20 of 32 and getting 1 flipped bit for this case is extremely unrealistic). The result looks like
 ```
 Error found. Mode INITIAL_READ, total errors 0x2B788 out of 0x18000000 (0.04422069%)
 Errors address range: 0x6000E900..=0xBFDFF9FF  iteration:38
@@ -144,6 +152,6 @@ TogglCnt                2|   7  18   95 264| 8451786 40056770| 11k 15k  20k 23k
 1sInValu                3|  19  66  223 700|17683704 6856 11k| 16k 21k  25k 26k
    0x1?  23k 17k  12k6327|2883 917  282  64|   9             |
 ```
-* Other critical errors inside memory chips or memory controller. This gives normal distributions for TogglCnt, but for 1sInValu the distribution may be different - since critical internal errors may be reported by some fixed patterns (0x00000000, 0xFFFFFFFF - for some EDC problems, 0x0BADAC?? - for some nvidia problems).
-* Memory errors in the areas where error counts are stored)) This often shows as millions of errors in all table entries, typically with the total errors greater then tested memory size. Such results are numerically garbage but means that the gpu/memory is really mostly non-functional.
-* The errors in GPU during calculation of addresses and desired values or in value comparison. This can lead to the any pattern of reporting at all, since the logic of program is broken.
+* Other critical errors inside memory chips or memory controller. This gives normal distributions for TogglCnt, but for 1sInValu the distribution may be different - since critical internal errors may be reported by some fixed patterns (0x00000000, 0xFFFFFFFF - for some EDC problems, 0x0BADAC?? - for some NVIDIA problems).
+* Memory errors in the areas where error counts are stored)) This often shows as millions of errors in all table entries, typically with the total errors greater than tested memory size. Such results are numerically garbage, but means that the gpu/memory is really mostly non-functional.
+* The errors in GPU during calculation of addresses and desired values or in value comparison. This can lead to any pattern of reporting at all, since the logic of a program is broken.
