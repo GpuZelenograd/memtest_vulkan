@@ -109,13 +109,18 @@ memtest_vulkan: no any errors, testing PASSed.
   press any key to continue...
 ```
 
-## Troubleshooting & reporting issues
+## <a id="troubleshooting">Troubleshooting & reporting issues</a>
 
-If the test fails to start and shows `memtest_vulkan: INIT OR FIRST testing failed due to runtime error` for a compatible GPU there is some incompatibility
-in vulkan installation. If multiple ICD's are install a specific one may be specified by setting environment variable like `VK_DRIVER_FILES=/usr/share/vulkan/icd.d/nvidia_icd.json`.
+If the test fails to start and shows `memtest_vulkan: INIT OR FIRST testing failed due to runtime error` for a known to be vulkan-compatible GPU there is some incompatibility in vulkan installation. Sometimes this is caused by conflicts between several vulkan drivers installed. Since version v1.3.207 [Khronos vulkan loader supports selecting exact driver with `VK_DRIVER_FILES` environment variable](https://github.com/KhronosGroup/Vulkan-Loader/blob/v1.3.233/docs/LoaderInterfaceArchitecture.md#table-of-debug-environment-variables).
+
+For example on Linux with loader `libvulkan.so` version v1.3.207 or above the test can be run with a specific ICD the following way: `VK_DRIVER_FILES=/usr/share/vulkan/icd.d/nvidia_icd.json ./memtest_vulkan`.
 Also try running with root/admin privileges - this is sometimes required on headless devices.
 
-If this doesn't help - enable verbose mode by renaming the executable to `memtest_vulkan_verbose` and running again. The test will output diagnostic information to stdout - please copy it to a new issue at https://github.com/GpuZelenograd/memtest_vulkan/issues.
+If neither method helps - enable verbose mode by renaming the executable to `memtest_vulkan_verbose` and running again. The test will output diagnostic information to stdout - please copy it to a new issue at https://github.com/GpuZelenograd/memtest_vulkan/issues.
+
+## New feature development
+
+
 
 ## License
 
