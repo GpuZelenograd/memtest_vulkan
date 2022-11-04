@@ -9,6 +9,7 @@ on:
 jobs:
   build-in-docker-job:
     runs-on: ubuntu-22.04
+    container: ghcr.io/galkinvv/manycross2014:rust-1.64
     steps:
       - uses: actions/checkout@v3
       - uses: ./.github/actions/build-in-docker
