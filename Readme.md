@@ -14,7 +14,7 @@ Also requires support of `DEVICE_LOCAL+HOST_COHERENT` memory type from the compu
 
 Windows version can be started by double-click
 
-![WindowsScreenshot](.github/memtest_vulkan_windows_rx580.png)
+<a id="usage_screenshot">![WindowsScreenshot](.github/memtest_vulkan_windows_rx580.png)</a>
 
 The example above was stopped by Ctrl+C after showing first error.
 
@@ -123,7 +123,7 @@ memtest_vulkan is licensed similar to `erupt` under the [zlib License](https://g
 
 ## Memory error kinds (theory)
 
-* The single-bit errors like in an image above. Such errors are counted in ToggleCnt column 0x01 and the exact bit indices are counted in SingleIdx column. Such errors may be detected by EDC in theory if they occur during transmitting by EDC-enabled part of GPU<->memory wire. But I'm not sure if EDC helps if they occure when transmitting between gpu cache and gpu core or something like this.
+* The single-bit errors like in an [image above](#usage_screenshot). Such errors are counted in ToggleCnt column 0x01 and the exact bit indices are counted in SingleIdx column. Such errors may be detected by EDC in theory if they occur during transmitting by EDC-enabled part of GPU<->memory wire. But I'm not sure if EDC helps if they occure when transmitting between gpu cache and gpu core or something like this.
 * The errors on data-inversion bit (if not detected by EDC). Those should be counted in ToggleCnt columns 0x07/0x08 without SingleIdx info for them.
 * The multi-bit transmission errors. Those should be counted in ToggleCnt columns above 0x01, without SingleIdx info for them.
 * The errors flipped in the memory chips itself during data storage/"refresh cycles". This may be caused by too big period of refresh or other problems. memtest_vulkan uses a part of memory in a "write once at start but reread everytime" pattern - it is the reason fot read GB is more then written GB. If a data flips inside this part of memory - there would be infinite log of error messages marked with "Mode NEXT_RE_READ" (in oppposite to Mode INITIAL_READ). Lowering the clocks without restarting test doesn't get rid of such errors.
