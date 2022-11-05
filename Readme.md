@@ -131,7 +131,7 @@ If you want to experiment with code modifications, there are two ways to do this
       - fork this repository
       - enable workflows on the actions tab of the forked repository
       - edit&commit code changes (small changes are possible even via editing with a browser)
-      - and github will build the binary from your changes for you as the artifacts on the actions tab!
+      - and github will build the binary from your changes for you as the artifacts on the actions tab in 5 minutes!
 
 ## License
 
