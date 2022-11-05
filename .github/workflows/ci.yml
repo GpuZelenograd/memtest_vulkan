@@ -12,6 +12,9 @@ jobs:
     container: ghcr.io/galkinvv/manycross2014:rust-1.64
     steps:
       - uses: actions/checkout@v3
+      - uses: actions/cache@v3
+        with:
+          path: target
       - run: ./build-artifacts.sh ${GITHUB_REF_NAME}
       - uses: actions/upload-artifact@v3
         with:
