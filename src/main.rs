@@ -930,7 +930,7 @@ fn test_device<Writer: std::io::Write>(
             execute_wait_queue(test_offset, pipelines.write)?; //use emulate_write_bugs for error simulation
             written_bytes += test_window_size;
         }
-        let mut last_buffer_out: IOBuf = IOBuf::default();
+        let mut last_buffer_out: IOBuf;
         for window_idx in 0..test_window_count {
             let reread_mode_for_this_win = window_idx == 0;
             buffer_in.set_calc_param_for_starting_window();
@@ -998,9 +998,6 @@ fn test_device<Writer: std::io::Write>(
                 next_report_duration = second1 * 30; //later reports every 30 seconds
             }
             writeln!(log_dupler, "{:7} iteration. Since last report passed {:15?} written {:7.1}GB, read: {:7.1}GB   {:6.1}GB/sec", iteration, elapsed, written_bytes as f32 / GB, read_bytes as f32 / GB, speed_gbps)?;
-            if env.verbose {
-                println!("{}", last_buffer_out);
-            }
             written_bytes = 0i64;
             read_bytes = 0i64;
             start = time::Instant::now();
