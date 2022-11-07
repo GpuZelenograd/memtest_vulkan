@@ -918,6 +918,7 @@ fn test_device<Writer: std::io::Write>(
     let mut written_bytes = 0i64;
     let mut read_bytes = 0i64;
     let mut next_report_duration = time::Duration::from_secs(0);
+    let mut time_before_reporting_standard_done = time::Duration::from_secs(60 * 5);
     let mut start = time::Instant::now();
     let mut buffer_in = IOBuf::for_initial_iteration();
     for iteration in 1..=iter_count {
@@ -989,7 +990,7 @@ fn test_device<Writer: std::io::Write>(
             };
             let second1 = time::Duration::from_secs(1);
             if next_report_duration.is_zero() {
-                writeln!(log_dupler, "Testing {}", selected_label)?;
+                writeln!(log_dupler, "Standard 5-minute test of {}", selected_label)?;
                 next_report_duration = second1; //2nd report after 1 second
             } else if next_report_duration == second1 {
                 close::raise_status_bit(close::app_status::INITED_OK);
@@ -1000,6 +1001,23 @@ fn test_device<Writer: std::io::Write>(
             writeln!(log_dupler, "{:7} iteration. Since last report passed {:15?} written {:7.1}GB, read: {:7.1}GB   {:6.1}GB/sec", iteration, elapsed, written_bytes as f32 / GB, read_bytes as f32 / GB, speed_gbps)?;
             written_bytes = 0i64;
             read_bytes = 0i64;
+            if time::Duration::ZERO < time_before_reporting_standard_done {
+                if time_before_reporting_standard_done > elapsed {
+                    time_before_reporting_standard_done -= elapsed;
+                } else {
+                    time_before_reporting_standard_done = time::Duration::ZERO;
+                    let has_errors = close::check_any_bits_set(
+                        close::fetch_status(),
+                        close::app_status::RUNTIME_ERRORS,
+                    );
+                    match has_errors {
+                        true => println!("Standard 5-minute test fail - ERRORS FOUND"),
+                        false => println!("Standard 5-minute test PASSed! Just press Ctrl+C unless you plan long test run."),
+                    };
+                    println!("Extended endless test started; testing more than 2 hours is usually unneeded;");
+                    println!("use Ctrl+C to stop it when you decide it's enough");
+                }
+            }
             start = time::Instant::now();
         }
         if stop_testing {
