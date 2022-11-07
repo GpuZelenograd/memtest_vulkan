@@ -32,6 +32,11 @@ pub fn close_requested() -> bool {
     INTERRUPT_REQUESTED.swap(false, SeqCst)
 }
 
+pub fn declare_exit_due_timeout() {
+    raise_status_bit(app_status::QUIT_JOB_REQUESTED);
+    INTERRUPT_REQUESTED.swap(true, SeqCst);
+}
+
 pub fn immediate_exit(raise_abort_flag: bool) -> ! {
     if raise_abort_flag {
         raise_status_bit(app_status::RUNTIME_ABORT)

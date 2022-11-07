@@ -1023,6 +1023,7 @@ fn test_device<Writer: std::io::Write>(
 
         device.destroy_fence(fence, None);
     }
+    close::declare_exit_due_timeout();
     Ok(())
 }
 
