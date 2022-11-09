@@ -485,17 +485,26 @@ fn try_fill_default_mem_budget(loaded_devices: &LoadedDevices, env: &mut Process
     let mut budget_structure: ext_memory_budget::PhysicalDeviceMemoryBudgetPropertiesEXT =
         Default::default();
 
-    let mut budget_request = *vk::PhysicalDeviceMemoryProperties2Builder::new();
-    budget_request.p_next = &mut budget_structure
-        as *mut ext_memory_budget::PhysicalDeviceMemoryBudgetPropertiesEXT
-        as *mut c_void;
-    let memory_props2 = unsafe {
-        instance.get_physical_device_memory_properties2(
+    let mut memory_props = unsafe {
+        instance.get_physical_device_memory_properties(
             devices_labeled_from_1[selected_index].physical_device,
-            Some(budget_request),
         )
     };
-    let memory_props = memory_props2.memory_properties;
+
+    let mut budget_request = *vk::PhysicalDeviceMemoryProperties2Builder::new();
+
+    if devices_labeled_from_1[selected_index].has_vk_1_1 {
+        budget_request.p_next = &mut budget_structure
+            as *mut ext_memory_budget::PhysicalDeviceMemoryBudgetPropertiesEXT
+            as *mut c_void;
+        let memory_props2 = unsafe {
+            instance.get_physical_device_memory_properties2(
+                devices_labeled_from_1[selected_index].physical_device,
+                Some(budget_request),
+            )
+        };
+        memory_props = memory_props2.memory_properties;
+    }
     for i in 0..memory_props.memory_heap_count as usize {
         if env.verbose {
             println!(
@@ -1046,6 +1055,7 @@ struct NamedComputeDevice {
     label: String,
     physical_device: vk::PhysicalDevice,
     queue_family_index: u32,
+    has_vk_1_1: bool,
 }
 
 fn load_instance(
@@ -1219,14 +1229,24 @@ fn list_devices_ordered_labaled_from_1(
 
             let mut pci_props_structure: ext_pci_bus_info::PhysicalDevicePCIBusInfoPropertiesEXT =
                 Default::default();
-            let mut pci_structure_request = *vk::PhysicalDeviceProperties2Builder::new();
-            pci_structure_request.p_next = &mut pci_props_structure
-                as *mut ext_pci_bus_info::PhysicalDevicePCIBusInfoPropertiesEXT
-                as *mut c_void;
+            let mut properties = instance.get_physical_device_properties(physical_device);
+            let effective_version = (
+                vk::api_version_major(properties.api_version),
+                vk::api_version_minor(properties.api_version),
+            );
 
-            let properties = instance
-                .get_physical_device_properties2(physical_device, Some(pci_structure_request))
-                .properties;
+            //older vulkan implementations like broadcom on RaspberryPi lacks vk_1_1 support even if application requested it
+            let has_vk_1_1 = effective_version >= (1, 1);
+            if has_vk_1_1 {
+                let mut pci_structure_request = *vk::PhysicalDeviceProperties2Builder::new();
+                pci_structure_request.p_next = &mut pci_props_structure
+                    as *mut ext_pci_bus_info::PhysicalDevicePCIBusInfoPropertiesEXT
+                    as *mut c_void;
+
+                properties = instance
+                    .get_physical_device_properties2(physical_device, Some(pci_structure_request))
+                    .properties;
+            }
             let memory_props = instance.get_physical_device_memory_properties(physical_device);
 
             let mut max_local_heap_size = 0i64;
@@ -1249,10 +1269,11 @@ fn list_devices_ordered_labaled_from_1(
                 properties,
                 max_local_heap_size,
                 pci_props_structure,
+                has_vk_1_1,
             ))
         })
         .collect();
-    compute_capable_devices.sort_by_key(|(_, _, props, _, pci_props)| {
+    compute_capable_devices.sort_by_key(|(_, _, props, _, pci_props, _)| {
         let negative_bus_for_reverse_ordering = -(pci_props.pci_bus as i32);
         match props.device_type {
             vk::PhysicalDeviceType::DISCRETE_GPU => (0, negative_bus_for_reverse_ordering),
@@ -1290,6 +1311,7 @@ fn list_devices_ordered_labaled_from_1(
             ),
             physical_device: d.0,
             queue_family_index: d.1,
+            has_vk_1_1: d.5,
         });
     }
     Ok(LoadedDevices(instance, entry, messenger, numbered_devices))
