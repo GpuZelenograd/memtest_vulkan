@@ -1016,7 +1016,7 @@ fn test_device<Writer: std::io::Write>(
             } else {
                 next_report_duration = second1 * 30; //later reports every 30 seconds
             }
-            writeln!(log_dupler, "{:7} iteration. Passed {:7.4} seconds  written {:7.1}GB@{:6.1}GB/sec      checked {:7.1}GB@{:6.1}GB/sec", iteration, elapsed.as_secs_f32(), written_bytes as f32 / GB, write_speed_gbps, read_bytes as f32 / GB, check_speed_gbps)?;
+            writeln!(log_dupler, "{:7} iteration. Passed {:7.4} seconds  written:{:7.1}GB{:6.1}GB/sec        checked:{:7.1}GB{:6.1}GB/sec", iteration, elapsed.as_secs_f32(), written_bytes as f32 / GB, write_speed_gbps, read_bytes as f32 / GB, check_speed_gbps)?;
             written_bytes = 0i64;
             read_bytes = 0i64;
             if time::Duration::ZERO < time_before_reporting_standard_done {
