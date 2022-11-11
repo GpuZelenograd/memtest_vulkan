@@ -928,18 +928,21 @@ fn test_device<Writer: std::io::Write>(
     let mut read_bytes = 0i64;
     let mut next_report_duration = time::Duration::from_secs(0);
     let mut time_before_reporting_standard_done = time::Duration::from_secs(60 * 5);
-    let mut start = time::Instant::now();
+    let mut write_duration = time::Duration::ZERO;
     let mut buffer_in = IOBuf::for_initial_iteration();
+    let mut start = time::Instant::now();
     for iteration in 1..=iter_count {
         unsafe { std::ptr::write(mapped, buffer_in) }
+        let write_start = time::Instant::now();
         for window_idx in 1..test_window_count {
             let test_offset = test_window_size * window_idx;
             unsafe {
                 (*mapped).calc_param = buffer_in.calc_param + window_idx as u32 * 0x81_u32;
             }
             execute_wait_queue(test_offset, pipelines.write)?; //use emulate_write_bugs for error simulation
-            written_bytes += test_window_size;
         }
+        written_bytes += test_window_size * (test_window_count - 1);
+        write_duration += write_start.elapsed();
         let mut last_buffer_out: IOBuf;
         for window_idx in 0..test_window_count {
             let reread_mode_for_this_win = window_idx == 0;
@@ -957,7 +960,6 @@ fn test_device<Writer: std::io::Write>(
             }
             let test_offset = test_window_size * window_idx;
             execute_wait_queue(test_offset, pipelines.read)?;
-            read_bytes += test_window_size;
             {
                 unsafe {
                     last_buffer_out = std::ptr::read(mapped);
@@ -988,12 +990,19 @@ fn test_device<Writer: std::io::Write>(
                 last_buffer_out.check_vec_first()?;
             }
         }
+        read_bytes += test_window_size * test_window_count;
         let elapsed = start.elapsed();
         let stop_testing = close::close_requested();
         if elapsed > next_report_duration || stop_testing {
-            let passed_secs = elapsed.as_secs_f32();
-            let speed_gbps = if passed_secs > 0.0001 {
-                (written_bytes + read_bytes) as f32 / GB / passed_secs
+            let write_secs = write_duration.as_secs_f32();
+            let passed_secs = elapsed.as_secs_f32() - write_secs;
+            let write_speed_gbps = if write_secs > 0.0001 {
+                written_bytes as f32 / GB / write_secs
+            } else {
+                0f32
+            };
+            let check_speed_gbps = if passed_secs > 0.0001 {
+                read_bytes as f32 / GB / passed_secs
             } else {
                 0f32
             };
@@ -1007,7 +1016,7 @@ fn test_device<Writer: std::io::Write>(
             } else {
                 next_report_duration = second1 * 30; //later reports every 30 seconds
             }
-            writeln!(log_dupler, "{:7} iteration. Since last report passed {:15?} written {:7.1}GB, read: {:7.1}GB   {:6.1}GB/sec", iteration, elapsed, written_bytes as f32 / GB, read_bytes as f32 / GB, speed_gbps)?;
+            writeln!(log_dupler, "{:7} iteration. Passed {:7.4} seconds  written {:7.1}GB@{:6.1}GB/sec      checked {:7.1}GB@{:6.1}GB/sec", iteration, elapsed.as_secs_f32(), written_bytes as f32 / GB, write_speed_gbps, read_bytes as f32 / GB, check_speed_gbps)?;
             written_bytes = 0i64;
             read_bytes = 0i64;
             if time::Duration::ZERO < time_before_reporting_standard_done {
@@ -1027,6 +1036,7 @@ fn test_device<Writer: std::io::Write>(
                     println!("use Ctrl+C to stop it when you decide it's enough");
                 }
             }
+            write_duration = time::Duration::ZERO;
             start = time::Instant::now();
         }
         if stop_testing {
