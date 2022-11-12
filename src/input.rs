@@ -125,7 +125,7 @@ impl Reader {
         loop {
             match terminal.read_event(None) {
                 Err(_) => return,
-                Ok(Some(Event::NoEvent)) => continue,
+                Ok(Some(Event::NoEvent)) | Ok(Some(Event::Resize(_))) => continue,
                 _user_event => break,
             };
         }
