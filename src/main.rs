@@ -927,7 +927,8 @@ fn test_device<Writer: std::io::Write>(
     let mut written_bytes = 0i64;
     let mut read_bytes = 0i64;
     let mut next_report_duration = time::Duration::from_secs(0);
-    let mut time_before_reporting_standard_done = time::Duration::from_secs(60 * 5);
+    let extended_test_report_duration = time::Duration::from_secs(30);
+    let mut reports_before_standard_done = 12i32;
     let mut write_duration = time::Duration::ZERO;
     let mut buffer_in = IOBuf::for_initial_iteration();
     let mut start = time::Instant::now();
@@ -1014,28 +1015,32 @@ fn test_device<Writer: std::io::Write>(
                 close::raise_status_bit(close::app_status::INITED_OK);
                 next_report_duration = second1 * 5; //3rd report after 5 seconds
             } else {
-                next_report_duration = second1 * 30; //later reports every 30 seconds
+                next_report_duration = extended_test_report_duration; //all later reports
             }
-            writeln!(log_dupler, "{:7} iteration. Passed {:7.4} seconds  written:{:7.1}GB{:6.1}GB/sec        checked:{:7.1}GB{:6.1}GB/sec", iteration, elapsed.as_secs_f32(), written_bytes as f32 / GB, write_speed_gbps, read_bytes as f32 / GB, check_speed_gbps)?;
+            if reports_before_standard_done == 0 {
+                let has_errors = close::check_any_bits_set(
+                    close::fetch_status(),
+                    close::app_status::RUNTIME_ERRORS,
+                );
+                match has_errors {
+                    true => println!("Standard 5-minute test fail - ERRORS FOUND"),
+                    false => println!("Standard 5-minute test PASSed! Just press Ctrl+C unless you plan long test run."),
+                };
+                println!(
+                    "Extended endless test started; testing more than 2 hours is usually unneeded"
+                );
+                println!("use Ctrl+C to stop it when you decide it's enough");
+            } else {
+                writeln!(log_dupler, "{:7} iteration. Passed {:7.4} seconds  written:{:7.1}GB{:6.1}GB/sec        checked:{:7.1}GB{:6.1}GB/sec", iteration, elapsed.as_secs_f32(), written_bytes as f32 / GB, write_speed_gbps, read_bytes as f32 / GB, check_speed_gbps)?;
+            }
+            reports_before_standard_done -= 1;
+            if reports_before_standard_done == 0 {
+                // The last iteration before report has a sleep before it to test hot gpu behaviour
+                // in a situation of load pause and low-performance memory frequency
+                std::thread::sleep(next_report_duration / 2);
+            }
             written_bytes = 0i64;
             read_bytes = 0i64;
-            if time::Duration::ZERO < time_before_reporting_standard_done {
-                if time_before_reporting_standard_done > elapsed {
-                    time_before_reporting_standard_done -= elapsed;
-                } else {
-                    time_before_reporting_standard_done = time::Duration::ZERO;
-                    let has_errors = close::check_any_bits_set(
-                        close::fetch_status(),
-                        close::app_status::RUNTIME_ERRORS,
-                    );
-                    match has_errors {
-                        true => println!("Standard 5-minute test fail - ERRORS FOUND"),
-                        false => println!("Standard 5-minute test PASSed! Just press Ctrl+C unless you plan long test run."),
-                    };
-                    println!("Extended endless test started; testing more than 2 hours is usually unneeded;");
-                    println!("use Ctrl+C to stop it when you decide it's enough");
-                }
-            }
             write_duration = time::Duration::ZERO;
             start = time::Instant::now();
         }
