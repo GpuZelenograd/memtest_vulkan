@@ -10,7 +10,7 @@ Requires system-provided vulkan loader and driver supporting Vulkan 1.1 (already
 
 Download Windows .exe from [releases](https://github.com//GpuZelenograd/memtest_vulkan/releases/) or [nightly build artifacts](https://github.com/GpuZelenograd/memtest_vulkan/actions) (github account required, only last 3 months kept).
 
-Start version by double-clicking the test utility. No installation / parameters / configuration / admin-rights required.
+Start test by double-clicking the utility, no installation / parameters / configuration / admin-rights required.
 ![WindowsScreenshot](.github/memtest_vulkan_windows_rtx2070.png)
 
 Any found errors are immediately reported with a multi-line details. Detailed descriptions given below may help in advanced cases, but most of the time it's enough just check if errors are absent or present
@@ -39,7 +39,7 @@ memtest_vulkan: no any errors, testing PASSed.
 
 ### Linux Installation & Usage
 
-Install by unpacking archives with linux prebuilt binaries for X86_64 (Desktop) or ARM64 (Embedded) from 
+Install by unpacking archives with linux prebuilt binaries for X86_64 (Desktop) or AARCH64 (Embedded) from 
 [Releases](https://github.com//GpuZelenograd/memtest_vulkan/releases/) or [nightly build artifacts](https://github.com/GpuZelenograd/memtest_vulkan/actions) (github account required). Build artifacts are transparently produced from source by github actions, but only last 3 months kept.
 
 
@@ -100,7 +100,7 @@ Runtime error: ERROR_DEVICE_LOST while getting () in context wait_for_fences
 ...hangs in-kernel due to driver
 
 
-ARM platforms like Jetson or Raspberry are supported by aarch64 binary
+64-bit ARM platforms like Jetson or newer Raspberry are supported by AARCH64 binary
 ```
 jetson-nx-alpha :: ~ » ./memtest_vulkan
 https://github.com/GpuZelenograd/memtest_vulkan v0.3.0 by GpuZelenograd
