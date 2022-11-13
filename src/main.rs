@@ -923,6 +923,11 @@ fn test_device<Writer: std::io::Write>(
         );
     }
 
+    // allow write bugs emulation for testing purposes
+    let emulate_write_bugs_iteration = env::var("MEMTEST_VULKAN_EMULATE_WRITE_BUG_ITERATION")
+        .ok()
+        .and_then(|s| s.parse::<i32>().ok())
+        .unwrap_or_default();
     let iter_count = 100000000; //by default exit after several days of testing
     let mut written_bytes = 0i64;
     let mut read_bytes = 0i64;
@@ -940,7 +945,14 @@ fn test_device<Writer: std::io::Write>(
             unsafe {
                 (*mapped).calc_param = buffer_in.calc_param + window_idx as u32 * 0x81_u32;
             }
-            execute_wait_queue(test_offset, pipelines.write)?; //use emulate_write_bugs for error simulation
+            execute_wait_queue(
+                test_offset,
+                if iteration != emulate_write_bugs_iteration {
+                    pipelines.write
+                } else {
+                    pipelines.emulate_write_bugs
+                },
+            )?;
         }
         written_bytes += test_window_size * (test_window_count - 1);
         write_duration += write_start.elapsed();
