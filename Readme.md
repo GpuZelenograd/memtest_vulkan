@@ -100,7 +100,7 @@ Runtime error: ERROR_DEVICE_LOST while getting () in context wait_for_fences
 ...hangs in-kernel due to driver
 
 
-64-bit ARM platforms like Jetson or newer Raspberry are supported by AARCH64 binary
+64-bit ARM platforms are supported by AARCH64 binary. Example run on NVIDIA Jetson
 ```
 jetson-nx-alpha :: ~ » ./memtest_vulkan
 https://github.com/GpuZelenograd/memtest_vulkan v0.3.0 by GpuZelenograd
@@ -113,6 +113,38 @@ Testing 1: Bus=0x00:00 DevId=0xA5BA03D7   8GB NVIDIA Tegra Xavier (nvgpu)
      61 iteration. Since last report passed 10.06722992s    written   128.2GB, read:   256.5GB     38.2GB/sec
     593 iteration. Since last report passed 100.063183744s  written  1263.5GB, read:  2527.0GB     37.9GB/sec
    1121 iteration. Since last report passed 100.043447136s  written  1254.0GB, read:  2508.0GB     37.6GB/sec
+^C
+memtest_vulkan: no any errors, testing PASSed.
+  press any key to continue...
+```
+
+Raspberry 4 with 64-bit Broadcom V3D vulkan driver is also supported, but the achieved performance is quite low. No GUI required, test can be started via SSH connection:
+```
+root@raspberrypi:/root# ./memtest_vulkan
+https://github.com/GpuZelenograd/memtest_vulkan v0.4.2 by GpuZelenograd
+To finish testing use Ctrl+C
+
+1: Bus=0x00:00 DevId=0xBE485FD3   1GB V3D 4.2
+2: Bus=0x00:00 DevId=0x0000   2GB llvmpipe (LLVM 14.0.6, 128 bits)
+(first device will be autoselected in 0 seconds)   Override index to test:
+    ...first device autoselected
+Standard 5-minute test of 1: Bus=0x00:00 DevId=0xBE485FD3   1GB V3D 4.2
+      1 iteration. Passed  1.8044 seconds  written:    0.2GB   0.6GB/sec        checked:    0.5GB   0.4GB/sec
+      2 iteration. Passed  1.8037 seconds  written:    0.2GB   0.6GB/sec        checked:    0.5GB   0.4GB/sec
+      5 iteration. Passed  5.4135 seconds  written:    0.8GB   0.6GB/sec        checked:    1.5GB   0.4GB/sec
+     22 iteration. Passed 30.6776 seconds  written:    4.2GB   0.6GB/sec        checked:    8.5GB   0.4GB/sec
+     39 iteration. Passed 30.6716 seconds  written:    4.2GB   0.6GB/sec        checked:    8.5GB   0.4GB/sec
+     56 iteration. Passed 30.6738 seconds  written:    4.2GB   0.6GB/sec        checked:    8.5GB   0.4GB/sec
+     73 iteration. Passed 30.6744 seconds  written:    4.2GB   0.6GB/sec        checked:    8.5GB   0.4GB/sec
+     90 iteration. Passed 30.6714 seconds  written:    4.2GB   0.6GB/sec        checked:    8.5GB   0.4GB/sec
+    107 iteration. Passed 30.6736 seconds  written:    4.2GB   0.6GB/sec        checked:    8.5GB   0.4GB/sec
+    124 iteration. Passed 30.6688 seconds  written:    4.2GB   0.6GB/sec        checked:    8.5GB   0.4GB/sec
+    141 iteration. Passed 30.6810 seconds  written:    4.2GB   0.6GB/sec        checked:    8.5GB   0.4GB/sec
+    158 iteration. Passed 30.6751 seconds  written:    4.2GB   0.6GB/sec        checked:    8.5GB   0.4GB/sec
+Standard 5-minute test PASSed! Just press Ctrl+C unless you plan long test run.
+Extended endless test started; testing more than 2 hours is usually unneeded
+use Ctrl+C to stop it when you decide it's enough
+    192 iteration. Passed 30.6733 seconds  written:    4.2GB   0.6GB/sec        checked:    8.5GB   0.4GB/sec
 ^C
 memtest_vulkan: no any errors, testing PASSed.
   press any key to continue...
@@ -149,6 +181,8 @@ If you want to experiment with code modifications, there are two ways to do this
       - enable workflows on the actions tab of the forked repository
       - edit&commit code changes (small changes are possible even via editing with a browser)
       - and github will build the binary from your changes for you as the artifacts on the actions tab in 5 minutes!
+      
+Since most of the time the GPUs are working fine, it may be hard to check the error handling behavior. The `MEMTEST_VULKAN_EMULATE_WRITE_BUG_ITERATION` environment variable was introduced to simplify this task. Set it to non-zero number generates 'fake' error during writing to the memory on the specified iteration that later would be found and reported during check stage.
 
 ## Acknowledgements
 The idea inspired by OpenCL-based cross-platform memory testing tool [memtestCL](https://github.com/ihaque/memtestCL).
