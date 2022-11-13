@@ -158,7 +158,7 @@ So, for licensing simplicity, memtest_vulkan is also licensed under the [zlib Li
 
 ## Video card memory error kinds (theory)
 
-### Classification of the errors by the "what have gone wrong"
+### Classification of the errors by the "*what* have gone wrong"
 * The single-bit errors like in an [image above](#errors_screenshot). Such errors are counted in ToggleCnt column 0x01 and the exact bit indices are counted in SingleIdx column. Such errors may be detected by EDC in theory if they occur during transmitting by EDC-enabled part of GPU<->memory wire. But I'm not sure if EDC helps if they occure when transmitting between gpu cache and gpu core or something like this.
 * The errors on data-inversion bit (if not detected by EDC). Those should be counted in ToggleCnt columns 0x07/0x08 without SingleIdx info for them.
 * The multi-bit transmission errors. Those should be counted in ToggleCnt columns above 0x01, without SingleIdx info for them.
@@ -180,7 +180,11 @@ TogglCnt                2|   7  18   95 264| 8451786 40056770| 11k 15k  20k 23k
 * The errors in GPU during calculation of addresses and desired values or in value comparison. This can lead to any pattern of reporting at all, since the logic of a program is broken.
 
 
-### Ortogonal classification by "when things have gone wrong"
-* the simplest situation is "errors appears immediately when GPU+memory operates at given frequency" - for it errors are reported nearly immediately.
-* sometimes the system works fine at room temperature but after getting hot due to continuous load the errors are coming. To catch such errors some pre-heat time is needed, the 5-6 minutes of standard test are designed exactly to wait for acheiving higher temperatures.
-* the rare-occuring errors. When hardware is working near its limits the errors can preent but be fairly rare or depend on the outer factors like "electrical power network noise caused by powering on a drill in a nearby office"
+### Orthogonal classification by "*when* things have gone wrong"
+* Simplest situation: "errors appears immediately when GPU+memory operates at given frequency". The tests report such nearly immediately.
+* Temperature-dependent: sometimes the system works fine at room temperature but after getting hot due to continuous load the errors are coming. To catch such errors some pre-heat time is needed, the 5-6 minutes of standard test are designed exactly to wait for achieving higher temperatures.
+* Near-the-limit, rare-occurring errors. When hardware is working near its limits, the errors can present but be fairly rare or depend on the outer factors like "electrical power network noise caused by powering on a drill in a nearby office". Catching such errors may require 2-3 hours of test run.
+* Lower-frequencies errors. Sometimes faulty memory or GPU can handle high-performance "huge frequency and medium timings" mode but fails to handle the low-performance "low frequency and small timings" mode.
+* Frequency-switch errors. The GPU+memory may work fine at both high- and low-performance modes, but failing at the moment of the switching, while clocks and timings are adjusted.
+
+Testing mode for the two later categories is still under development - it's tricky to check memory operation at lower frequency, since the driver nearly immediate switches to performance mode when load begins. However, v0.4.2 introduces a preliminary attempt to handle this. After initial pre-heat, the load is stopped for 15 seconds and then raises again.
