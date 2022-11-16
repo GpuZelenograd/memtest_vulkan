@@ -714,7 +714,7 @@ fn test_device<Writer: std::io::Write>(
         let suitable = (io_mem_reqs.memory_type_bits & (1 << i)) != 0;
         let memory_type = memory_props.memory_types[i as usize];
         if env.verbose && !memory_type.property_flags.is_empty() {
-            println!("{:2} {:?} ", i, memory_type);
+            writeln!(log_dupler, "{:2} {:?} ", i, memory_type);
         }
         if suitable
             && memory_type.property_flags.contains(
@@ -733,7 +733,7 @@ fn test_device<Writer: std::io::Write>(
         .min_by_key(|i| memory_props.memory_types[*i as usize].property_flags)
         .ok_or("This device lacks support for DEVICE_LOCAL+HOST_COHERENT memory type.")?;
     if env.verbose {
-        println!(
+        writeln!(log_dupler, 
             "CoherentIO memory          type {} inside heap {:?}",
             io_mem_index,
             memory_props.memory_heaps
@@ -819,7 +819,7 @@ fn test_device<Writer: std::io::Write>(
             .allocation_size(allocation_size as u64)
             .memory_type_index(test_mem_index);
         if env.verbose {
-            println!("Trying {:7.3}GB buffer...", allocation_size as f32 / GB);
+            writeln!(log_dupler, "Trying {:7.3}GB buffer...", allocation_size as f32 / GB);
         }
         match unsafe { device.allocate_memory(&test_memory_allocate_info, None) }
             .err_retry_with_lower_memory(env, "allocate_memory")
@@ -919,7 +919,7 @@ fn test_device<Writer: std::io::Write>(
             }
         }
         if env.verbose {
-            println!(
+            writeln!(log_dupler, 
                 "Don't testing {:5.1}GB due to error: {}",
                 allocation_size as f32 / GB,
                 last_err
@@ -930,13 +930,13 @@ fn test_device<Writer: std::io::Write>(
         }
         if warn_on_budget_alloc_fail {
             warn_on_budget_alloc_fail = false;
-            println!("Failed allocating {:5.1}GB, trying to use smaller size. More system memory can help.", allocation_size as f32 / GB);
+            writeln!(log_dupler, "Failed allocating {:5.1}GB, trying to use smaller size. More system memory can help.", allocation_size as f32 / GB);
         }
         allocation_size -= ALLOCATION_TRY_STEP;
     }
 
     if env.verbose {
-        println!(
+        writeln!(log_dupler, 
             "Test memory size {:5.1}GB   type {:2}: {:?} {:?}",
             allocation_size as f32 / GB,
             test_mem_index,
@@ -1058,13 +1058,13 @@ fn test_device<Writer: std::io::Write>(
                     close::app_status::RUNTIME_ERRORS,
                 );
                 match has_errors {
-                    true => println!("Standard 5-minute test fail - ERRORS FOUND"),
-                    false => println!("Standard 5-minute test PASSed! Just press Ctrl+C unless you plan long test run."),
+                    true => writeln!(log_dupler, "Standard 5-minute test fail - ERRORS FOUND"),
+                    false => writeln!(log_dupler, "Standard 5-minute test PASSed! Just press Ctrl+C unless you plan long test run."),
                 };
-                println!(
+                writeln!(log_dupler, 
                     "Extended endless test started; testing more than 2 hours is usually unneeded"
                 );
-                println!("use Ctrl+C to stop it when you decide it's enough");
+                writeln!(log_dupler, "use Ctrl+C to stop it when you decide it's enough");
             } else {
                 writeln!(log_dupler, "{:7} iteration. Passed {:7.4} seconds  written:{:7.1}GB{:6.1}GB/sec        checked:{:7.1}GB{:6.1}GB/sec", iteration, elapsed.as_secs_f32(), written_bytes as f32 / GB, write_speed_gbps, read_bytes as f32 / GB, check_speed_gbps)?;
             }
@@ -1149,7 +1149,7 @@ fn load_instance(
                     .unwrap_or("Invalid property_name")
             });
         }
-        println!();
+        writeln!(log_dupler, );
         for (idx, ext) in unsafe { entry.enumerate_instance_extension_properties(None, None) }
             .err_as_str()
             .unwrap_or_default()
@@ -1252,7 +1252,7 @@ impl Drop for LoadedDevices {
     fn drop(&mut self) {
         let LoadedDevices(instance, _, messenger, _) = self;
         unsafe {
-            println!("Destroying vk instance...");
+            writeln!(log_dupler, "Destroying vk instance...");
             if !messenger.is_null() {
                 instance.destroy_debug_utils_messenger_ext(*messenger, None);
             }
@@ -1381,8 +1381,8 @@ fn prompt_for_label(verbose: bool) -> Option<usize> {
         let formatted_prompt: String;
         if let Some(effective_duration) = prompt_duration {
             if effective_duration < prompt_start.elapsed() {
-                println!();
-                println!("    ...first device autoselected");
+                writeln!(log_dupler, );
+                writeln!(log_dupler, "    ...first device autoselected");
                 break;
             } else {
                 let duration_left = effective_duration - prompt_start.elapsed();
@@ -1396,7 +1396,7 @@ fn prompt_for_label(verbose: bool) -> Option<usize> {
         match input_reader.input_digit_step(prompt, &time::Duration::from_millis(250)) {
             Ok(input::ReaderEvent::Edited) => prompt_duration = None,
             Ok(input::ReaderEvent::Canceled) => {
-                println!();
+                writeln!(log_dupler, );
                 device_test_index = None;
                 break;
             }
@@ -1406,13 +1406,13 @@ fn prompt_for_label(verbose: bool) -> Option<usize> {
                 {
                     true => {
                         //empty or all zeroes
-                        println!();
-                        println!("    ...testing default device confirmed");
+                        writeln!(log_dupler, );
+                        writeln!(log_dupler, "    ...testing default device confirmed");
                     }
                     false => match input_reader.current_input.parse::<usize>() {
                         Ok(parsed_idx) => {
                             device_test_index = Some(parsed_idx);
-                            println!();
+                            writeln!(log_dupler, );
                         }
                         Err(_) => {
                             input_reader.current_input.clear();
@@ -1426,7 +1426,7 @@ fn prompt_for_label(verbose: bool) -> Option<usize> {
             Err(e) => {
                 //if input machinery doesnt work treate it as nothing was enetred
                 if verbose {
-                    println!("Input machinery failure: {e}");
+                    writeln!(log_dupler, "Input machinery failure: {e}");
                 }
                 break;
             }
@@ -1478,20 +1478,20 @@ fn test_selected_label(
                     .spawn()
                 {
                     if env.verbose {
-                        println!("Spawned child {child:?} with PID {}", child.id());
+                        writeln!(log_dupler, "Spawned child {child:?} with PID {}", child.id());
                     }
                     let wait_result = child.wait();
                     let parent_close_requested = close::close_requested();
                     match wait_result {
                         Err(e) => {
-                            println!(
+                            writeln!(log_dupler, 
                                 "wait error: {e}  parent_close_requested: {parent_close_requested}"
                             );
                             return Err("Problem waiting for subprocess".into());
                         }
                         Ok(exit_status) => {
                             if env.verbose {
-                                println!("Subprocess status {exit_status} parent_close_requested {parent_close_requested}");
+                                writeln!(log_dupler, "Subprocess status {exit_status} parent_close_requested {parent_close_requested}");
                             }
                             match exit_status.code() {
                                 None => {
@@ -1503,7 +1503,7 @@ fn test_selected_label(
                                         & close::app_status::SIGNATURE_MASK)
                                         != close::app_status::SIGNATURE;
                                     if strange_code {
-                                        println!("Unexpected code {subprocess_code}");
+                                        writeln!(log_dupler, "Unexpected code {subprocess_code}");
                                         return Err(
                                             "Exit code of test process can't be interpreted".into(),
                                         );
@@ -1521,7 +1521,7 @@ fn test_selected_label(
                                                 close::app_status::QUIT_JOB_REQUESTED,
                                             )
                                         {
-                                            println!("Seems child exited for no reason, code {subprocess_code}");
+                                            writeln!(log_dupler, "Seems child exited for no reason, code {subprocess_code}");
                                             main_code |= close::app_status::RUNTIME_ABORT;
                                         }
                                     }
@@ -1533,13 +1533,13 @@ fn test_selected_label(
             }
             match mode {
                 SubprocessMode::NotExeced => {
-                    println!("Using in-process testing method");
+                    writeln!(log_dupler, "Using in-process testing method");
                     break;
                 }
                 SubprocessMode::FailedRetryLowerMemory => {
                     let smaller_memory = env.max_test_bytes - ALLOCATION_TRY_STEP;
                     if smaller_memory < MIN_WANTED_ALLOCATION {
-                        println!(
+                        writeln!(log_dupler, 
                             "Using in-process testing method with small memory limit {}",
                             env.max_test_bytes
                         );
@@ -1547,7 +1547,7 @@ fn test_selected_label(
                     }
                     env.max_test_bytes = smaller_memory;
                     if env.verbose {
-                        println!(
+                        writeln!(log_dupler, 
                             "retrying subprocess with smaller memory limit {}",
                             env.max_test_bytes
                         );
@@ -1565,7 +1565,7 @@ fn test_selected_label(
                 }
             }
         }
-        println!("Using in-process testing method");
+        writeln!(log_dupler, "Using in-process testing method");
     }
     test_in_this_process(loaded_devices, env)
 }
@@ -1670,7 +1670,7 @@ fn display_this_process_result(
     env: &ProcessEnv,
 ) -> ! {
     if let Some(e) = maybe_err {
-        println!("Runtime error: {e}");
+        writeln!(log_dupler, "Runtime error: {e}");
         close::raise_status_bit(close::app_status::RUNTIME_ABORT);
     }
     display_result(
@@ -1691,10 +1691,10 @@ fn display_result(
     if !env.interactive {
         close::immediate_exit(false);
     }
-    println!();
+    writeln!(log_dupler, );
     let mut key_reader = input::Reader::default();
     match result {
-        Err(e) => println!("memtest_vulkan: early exit during init: {e}"),
+        Err(e) => writeln!(log_dupler, "memtest_vulkan: early exit during init: {e}"),
         Ok((
             _,
             TestStatus {
@@ -1706,11 +1706,11 @@ fn display_result(
                 close::raise_status_bit(close::app_status::QUIT_JOB_REQUESTED);
             }
             if !close::check_any_bits_set(status, close::app_status::INITED_OK) {
-                println!("memtest_vulkan: INIT OR FIRST testing failed due to runtime error");
+                writeln!(log_dupler, "memtest_vulkan: INIT OR FIRST testing failed due to runtime error");
             } else if close::check_any_bits_set(status, close::app_status::RUNTIME_ABORT)
                 && !close::check_any_bits_set(status, close::app_status::RUNTIME_ERRORS)
             {
-                println!("memtest_vulkan: First test passed, but THEN runtime error occured");
+                writeln!(log_dupler, "memtest_vulkan: First test passed, but THEN runtime error occured");
             } else {
                 let has_errors =
                     close::check_any_bits_set(status, close::app_status::RUNTIME_ERRORS);
@@ -1718,8 +1718,8 @@ fn display_result(
                     key_reader.set_pass_fail_accent_color(has_errors);
                 }
                 match has_errors {
-                    true => println!("memtest_vulkan: memory/gpu ERRORS FOUND, testing finished."),
-                    false => println!("memtest_vulkan: no any errors, testing PASSed."),
+                    true => writeln!(log_dupler, "memtest_vulkan: memory/gpu ERRORS FOUND, testing finished."),
+                    false => writeln!(log_dupler, "memtest_vulkan: no any errors, testing PASSed."),
                 }
             }
         }
