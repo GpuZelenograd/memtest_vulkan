@@ -172,6 +172,29 @@ impl fmt::Debug for U64HexDebug {
     }
 }
 
+#[derive(Default)]
+struct DriverVersionDebug(u32);
+
+impl fmt::Debug for DriverVersionDebug {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let upper10bits = self.0 >> 22;
+        if upper10bits > 2 {
+            // NVIDIA (0x75a04180 = 470.129.06) and intel-mesa-on-linux (0x5402006 = 21.2.6) driver versioning
+            return write!(f, "v{}(0x{:X})", upper10bits, self.0);
+        }
+        let upper20bits = self.0 >> 12;
+        if upper20bits > 2 {
+            //intel-on-windows driver versioning (0x19453c = [30.0.]101.1340)
+            return write!(f, "v{}(0x{:X})", upper20bits, self.0);
+        }
+        if self.0 < 64 {
+            //basic small number versioning like llvm
+            return write!(f, "ver{}", self.0);
+        }
+        return write!(f, "0x{:X}", self.0);
+    }
+}
+
 #[derive(Copy, Clone)]
 struct MostlyZeroArr<const LEN: usize>([u32; LEN]);
 
@@ -1314,14 +1337,11 @@ fn list_devices_ordered_labaled_from_1(
         let pci_props = d.4;
         let api_info = if verbose {
             std::format!(
-                "API v.{}.{}.{}  ({}{:x})",
+                "API {}.{}.{}  {:?}",
                 vk::api_version_major(props.api_version),
                 vk::api_version_minor(props.api_version),
                 vk::api_version_patch(props.api_version),
-                "",
-                props.driver_version,//75a04180 = 470.129.06, llvm = 1, 
-//1: Bus=0x03:00 DevId=0x7340 API v.1.2.188  (8000c6)  8GB Radeon RX 5500 XT 30.0.13023.4001 21.30.23.04 
-//2: Bus=0x00:00 DevId=0x5902 API v.1.2.203  (19453c)  4GB Intel(R) HD Graphics 6 30.0.101.1340
+                DriverVersionDebug(props.driver_version),
             )
         } else {
             String::new()
