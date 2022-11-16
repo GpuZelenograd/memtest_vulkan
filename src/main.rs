@@ -1314,10 +1314,14 @@ fn list_devices_ordered_labaled_from_1(
         let pci_props = d.4;
         let api_info = if verbose {
             std::format!(
-                "API v.{}.{}.{}",
+                "API v.{}.{}.{}  ({}{:x})",
                 vk::api_version_major(props.api_version),
                 vk::api_version_minor(props.api_version),
                 vk::api_version_patch(props.api_version),
+                "",
+                props.driver_version,//75a04180 = 470.129.06, llvm = 1, 
+//1: Bus=0x03:00 DevId=0x7340 API v.1.2.188  (8000c6)  8GB Radeon RX 5500 XT 30.0.13023.4001 21.30.23.04 
+//2: Bus=0x00:00 DevId=0x5902 API v.1.2.203  (19453c)  4GB Intel(R) HD Graphics 6 30.0.101.1340
             )
         } else {
             String::new()
