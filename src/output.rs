@@ -57,9 +57,18 @@ pub struct LogDupler<Writer: io::Write> {
 }
 
 impl<Writer: io::Write> LogDupler<Writer> {
-    pub fn new(writer: Writer, log_file_name: Option<String>, max_size: u64) -> Self {
+    pub fn new(
+        writer: Writer,
+        log_file_name: Option<String>,
+        max_size: u64,
+        app_context: &str,
+    ) -> Self {
         let mut initial_buf: Vec<u8> = Default::default();
-        let _ = writeln!(&mut initial_buf, "logging started at {}", NowTime);
+        let _ = writeln!(
+            &mut initial_buf,
+            "{} logging started at {}",
+            app_context, NowTime
+        );
         Self {
             writer,
             log_file: None,
