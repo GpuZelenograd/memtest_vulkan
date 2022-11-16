@@ -1,26 +1,25 @@
 # [memtest_vulkan](https://github.com/GpuZelenograd/memtest_vulkan/blob/main/Readme.md) - GPU memory testing tool
 
-Opensource tool written in vulkan compute to stress test video memory for stability during overclocking or repair.
-Developed as an alternative to OpenCL-based tool [memtestCL](https://github.com/ihaque/memtestCL)
+Opensource cross-platform tool written in vulkan compute to stress test video memory for stability during overclocking or repair.
 
-Just start application, wait several minutes and stop testing by Ctrl+C. Detected errors are displayed immediately during test run. Though the image below gives detailed descriptions for errors table - actually it is not needed for 90% of uses. Just run the tool and see if errors are absent or present.
+Just start application, wait at least 6 minutes and stop testing by Ctrl+C. Detected errors are displayed immediately during test run.
 
-[Prebuilt binaries for windows and linux, including aarch64 NVIDIA Jetson](https://github.com//GpuZelenograd/memtest_vulkan/releases/)
+Requires system-provided vulkan loader and driver supporting Vulkan 1.1 (already installed with graphics drivers on most OS).
 
-Requires system-provided vulkan loader and vulkan driver supporting Vulkan 1.1 (they are installed with graphics drivers on most OS).
-Also requires support of `DEVICE_LOCAL+HOST_COHERENT` memory type from the compute device.
+## Installation & Usage
 
-## Usage examples
+Download Windows .exe from [releases](https://github.com//GpuZelenograd/memtest_vulkan/releases/). GitHub users also may want to try [nightly build artifacts](https://github.com/GpuZelenograd/memtest_vulkan/actions) (only last 3 months kept).
 
-Windows version can be started by double-click
+Start test by double-clicking the utility, no installation / parameters / configuration / admin-rights required.
+![WindowsScreenshot](.github/memtest_vulkan_windows_rtx2070.png)
 
-<a id="usage_screenshot">![WindowsScreenshot](.github/memtest_vulkan_windows_rx580.png)</a>
+Any found errors are immediately reported with a multi-line details. Detailed descriptions given below may help in advanced cases, but most of the time it's enough just check if errors are absent or present
+<a id="errors_screenshot">![ErrorsScreenshot](.github/memtest_vulkan_windows_rx580.png)</a>
 
-The example above was stopped by Ctrl+C after showing first error.
 
-Example run from windows command line without errors:
+Alternatively, the tool can be started from cmdline
 ```
-C:\Users\galkinvv\Desktop\x86_64-pc-windows-gnu>memtest_vulkan.exe
+C:\gpu-tools\memory>memtest_vulkan.exe
 https://github.com/GpuZelenograd/memtest_vulkan v0.3.0 by GpuZelenograd
 To finish testing use Ctrl+C
 
@@ -38,7 +37,17 @@ memtest_vulkan: no any errors, testing PASSed.
   press any key to continue...
 ```
 
-Running with NVIDIA gpu under linux may require explicitly setting `VK_DRIVER_FILES` variable
+### Linux Installation & Usage
+
+Install by unpacking archives with linux prebuilt binaries for X86_64 (Desktop) or AARCH64 (Embedded) from 
+[Releases](https://github.com//GpuZelenograd/memtest_vulkan/releases/) or [nightly build artifacts](https://github.com/GpuZelenograd/memtest_vulkan/actions) (github account required). Build artifacts are transparently produced from source by github actions, but only last 3 months kept.
+
+
+Linux platform often contains additional `llvmpipe` pure-CPU vulkan driver. So after the start device selection menu will be shown. You can wait 10 seconds for automatic device selection or manually type the device number to test
+![LinuxScreenshot](.github/linux-laptop-igpu.png)
+
+
+With multiple drivers packages installed running under linux may require [explicitly setting environment variables](#troubleshooting)
 ```
 [user@host ~]$ VK_DRIVER_FILES=/usr/share/vulkan/icd.d/nvidia_icd.json ./memtest_vulkan
 https://github.com/GpuZelenograd/memtest_vulkan v0.3.0 by GpuZelenograd
@@ -91,7 +100,7 @@ Runtime error: ERROR_DEVICE_LOST while getting () in context wait_for_fences
 ...hangs in-kernel due to driver
 
 
-Jetson is supported by aarch64 binary
+64-bit ARM platforms are supported by AARCH64 binary. Example run on NVIDIA Jetson
 ```
 jetson-nx-alpha :: ~ » ./memtest_vulkan
 https://github.com/GpuZelenograd/memtest_vulkan v0.3.0 by GpuZelenograd
@@ -109,17 +118,57 @@ memtest_vulkan: no any errors, testing PASSed.
   press any key to continue...
 ```
 
+Raspberry 4 with 64-bit Broadcom V3D vulkan driver is also supported, but the achieved performance is quite low. No GUI required, test can be started via SSH connection:
+```
+root@raspberrypi:/root# ./memtest_vulkan
+https://github.com/GpuZelenograd/memtest_vulkan v0.4.2 by GpuZelenograd
+To finish testing use Ctrl+C
+
+1: Bus=0x00:00 DevId=0xBE485FD3   1GB V3D 4.2
+2: Bus=0x00:00 DevId=0x0000   2GB llvmpipe (LLVM 14.0.6, 128 bits)
+(first device will be autoselected in 0 seconds)   Override index to test:
+    ...first device autoselected
+Standard 5-minute test of 1: Bus=0x00:00 DevId=0xBE485FD3   1GB V3D 4.2
+      1 iteration. Passed  1.8044 seconds  written:    0.2GB   0.6GB/sec        checked:    0.5GB   0.4GB/sec
+      2 iteration. Passed  1.8037 seconds  written:    0.2GB   0.6GB/sec        checked:    0.5GB   0.4GB/sec
+      5 iteration. Passed  5.4135 seconds  written:    0.8GB   0.6GB/sec        checked:    1.5GB   0.4GB/sec
+     22 iteration. Passed 30.6776 seconds  written:    4.2GB   0.6GB/sec        checked:    8.5GB   0.4GB/sec
+     39 iteration. Passed 30.6716 seconds  written:    4.2GB   0.6GB/sec        checked:    8.5GB   0.4GB/sec
+     56 iteration. Passed 30.6738 seconds  written:    4.2GB   0.6GB/sec        checked:    8.5GB   0.4GB/sec
+     73 iteration. Passed 30.6744 seconds  written:    4.2GB   0.6GB/sec        checked:    8.5GB   0.4GB/sec
+     90 iteration. Passed 30.6714 seconds  written:    4.2GB   0.6GB/sec        checked:    8.5GB   0.4GB/sec
+    107 iteration. Passed 30.6736 seconds  written:    4.2GB   0.6GB/sec        checked:    8.5GB   0.4GB/sec
+    124 iteration. Passed 30.6688 seconds  written:    4.2GB   0.6GB/sec        checked:    8.5GB   0.4GB/sec
+    141 iteration. Passed 30.6810 seconds  written:    4.2GB   0.6GB/sec        checked:    8.5GB   0.4GB/sec
+    158 iteration. Passed 30.6751 seconds  written:    4.2GB   0.6GB/sec        checked:    8.5GB   0.4GB/sec
+Standard 5-minute test PASSed! Just press Ctrl+C unless you plan long test run.
+Extended endless test started; testing more than 2 hours is usually unneeded
+use Ctrl+C to stop it when you decide it's enough
+    192 iteration. Passed 30.6733 seconds  written:    4.2GB   0.6GB/sec        checked:    8.5GB   0.4GB/sec
+^C
+memtest_vulkan: no any errors, testing PASSed.
+  press any key to continue...
+```
+
 ## <a id="troubleshooting">Troubleshooting & reporting bugs</a>
-
-The `memtest_vulkan: early exit during init: The library failed to load` message means that your system lacks the Khronos Group Vulkan-Loader library. This library is used as a multiplexer between different drivers provided for different devices and typically is installed during installation of any device-specific vulkan driver. However, some platforms may need explicit installation: for example, to install it on ubuntu 18.04 run `sudo apt install libvulkan1`.
+Here is the list of common errors that prevent test from starting
+* `memtest_vulkan: early exit during init: The library failed to load`<br>
+This message means that your system lacks the Khronos Group Vulkan-Loader library. This library is used as a multiplexer between different drivers provided for different devices and typically is installed during installation of any device-specific vulkan driver. However, some platforms may need explicit installation: for example, to install it on ubuntu 18.04 run `sudo apt install libvulkan1`.
 Note that this library itself doesn't depend on any GPU, it is loadable even without any vulkan-capable devices at all. So the error above is a pure software-related error, not related to hardware at all.
-
-If the test fails to start and shows `memtest_vulkan: INIT OR FIRST testing failed due to runtime error` for a known to be vulkan-compatible GPU - there is some incompatibility in vulkan installation. Sometimes this is caused by conflicts between several vulkan drivers installed. Since version v1.3.207 [Khronos vulkan loader supports selecting exact driver with `VK_DRIVER_FILES` environment variable](https://github.com/KhronosGroup/Vulkan-Loader/blob/v1.3.233/docs/LoaderInterfaceArchitecture.md#table-of-debug-environment-variables).
-
-For example on Linux with loader `libvulkan.so` version v1.3.207 or above the test can be run with a specific ICD the following way: `VK_DRIVER_FILES=/usr/share/vulkan/icd.d/nvidia_icd.json ./memtest_vulkan`.
+* `Runtime error: This device lacks support for DEVICE_LOCAL+HOST_COHERENT memory type.` <br>
+Testing of some older pre-2016 GPUs is not supported due to driver/hardware limitations. For example, GTX780Ti on Windows even with latest 472.xx driver reports the message above
+* `INIT OR FIRST testing failed due to runtime error` <br>
+If the test fails to start and shows this message for a newer GPU - there is some incompatibility in vulkan installation. This may be caused by outdated driver or conflicts between several vulkan drivers installed. <br> <br>
+For example on Linux the test can be run with a specific ICD the following way:<br>
+`VK_DRIVER_FILES=/usr/share/vulkan/icd.d/nvidia_icd.json ./memtest_vulkan`<br>
+[With Khronos vulkan loader `libvulkan.so` version below v1.3.207 use `VK_ICD_FILENAMES` instead of `VK_DRIVER_FILES`](https://github.com/KhronosGroup/Vulkan-Loader/blob/v1.3.233/docs/LoaderInterfaceArchitecture.md#table-of-debug-environment-variables)<br>
 Also try running with root/admin privileges - this is sometimes required on headless devices.
 
-If neither method helps - enable verbose mode by renaming the executable to `memtest_vulkan_verbose` and running again. The test will output diagnostic information to stdout - please copy it to a new issue at https://github.com/GpuZelenograd/memtest_vulkan/issues.
+There are some reports that testing AMD GPUs sometimes gives unexpectedly low GPU load & video memory usage. The issue is still under investigation, but it is known that disabling/enabling "resizable BAR" in BIOS may help.
+
+Also, some drivers don't allow contiguous allocation of memory regions more than 4GB even on a GPU with a lot of memory. Such GPUs are tested with a 3.5GB memory allocation. This is not perfect, but such testing allows still allows detecting most of the errors, so don't bother if this is your case.
+
+If nothing helps - enable verbose mode by renaming the executable to `memtest_vulkan_verbose` and running again. The test will output diagnostic information to stdout - please copy it to a new issue at https://github.com/GpuZelenograd/memtest_vulkan/issues.
 
 ## <a id="development">New feature development</a>
 
@@ -132,14 +181,19 @@ If you want to experiment with code modifications, there are two ways to do this
       - enable workflows on the actions tab of the forked repository
       - edit&commit code changes (small changes are possible even via editing with a browser)
       - and github will build the binary from your changes for you as the artifacts on the actions tab in 5 minutes!
+      
+Since most of the time the GPUs are working fine, it may be hard to check the error handling behavior. The `MEMTEST_VULKAN_EMULATE_WRITE_BUG_ITERATION` environment variable was introduced to simplify this task. Set it to non-zero number generates 'fake' error during writing to the memory on the specified iteration that later would be found and reported during check stage.
 
-## License
+## Acknowledgements
+The idea inspired by OpenCL-based cross-platform memory testing tool [memtestCL](https://github.com/ihaque/memtestCL).
 
-memtest_vulkan is licensed similar to `erupt` under the [zlib License](https://github.com/GpuZelenograd/memtest_vulkan/blob/main/LICENSE)
+The implementation would not be possible without great vulkan bindings for rust provided by zlib-licensed [erupt library](https://gitlab.com/Friz64/erupt).
+So, for licensing simplicity, memtest_vulkan is also licensed under the [zlib License](https://github.com/GpuZelenograd/memtest_vulkan/blob/main/LICENSE).
 
 ## Video card memory error kinds (theory)
 
-* The single-bit errors like in an [image above](#usage_screenshot). Such errors are counted in ToggleCnt column 0x01 and the exact bit indices are counted in SingleIdx column. Such errors may be detected by EDC in theory if they occur during transmitting by EDC-enabled part of GPU<->memory wire. But I'm not sure if EDC helps if they occure when transmitting between gpu cache and gpu core or something like this.
+### Classification of the errors by the "*what* have gone wrong"
+* The single-bit errors like in an [image above](#errors_screenshot). Such errors are counted in ToggleCnt column 0x01 and the exact bit indices are counted in SingleIdx column. Such errors may be detected by EDC in theory if they occur during transmitting by EDC-enabled part of GPU<->memory wire. But I'm not sure if EDC helps if they occure when transmitting between gpu cache and gpu core or something like this.
 * The errors on data-inversion bit (if not detected by EDC). Those should be counted in ToggleCnt columns 0x07/0x08 without SingleIdx info for them.
 * The multi-bit transmission errors. Those should be counted in ToggleCnt columns above 0x01, without SingleIdx info for them.
 * The errors flipped in the memory chips itself during data storage/"refresh cycles". This may be caused by too big period of refresh or other problems. memtest_vulkan uses a part of memory in a "write once at start but reread every time" pattern - it is the reason fot read GB is more then written GB. If a data flips inside this part of memory - there would be infinite log of error messages marked with "Mode NEXT_RE_READ" (in opposite to Mode INITIAL_READ). Lowering the clocks without restarting test doesn't get rid of such errors.
@@ -158,3 +212,13 @@ TogglCnt                2|   7  18   95 264| 8451786 40056770| 11k 15k  20k 23k
 * Other critical errors inside memory chips or memory controller. This gives normal distributions for TogglCnt, but for 1sInValu the distribution may be different - since critical internal errors may be reported by some fixed patterns (0x00000000, 0xFFFFFFFF - for some EDC problems, 0x0BADAC?? - for some NVIDIA problems).
 * Memory errors in the areas where error counts are stored)) This often shows as millions of errors in all table entries, typically with the total errors greater than tested memory size. Such results are numerically garbage, but means that the gpu/memory is really mostly non-functional.
 * The errors in GPU during calculation of addresses and desired values or in value comparison. This can lead to any pattern of reporting at all, since the logic of a program is broken.
+
+
+### Orthogonal classification by "*when* things have gone wrong"
+* Simplest situation: "errors appears immediately when GPU+memory operates at given frequency". The tests report such nearly immediately.
+* Temperature-dependent: sometimes the system works fine at room temperature but after getting hot due to continuous load the errors are coming. To catch such errors some pre-heat time is needed, the 5-6 minutes of standard test are designed exactly to wait for achieving higher temperatures.
+* Near-the-limit, rare-occurring errors. When hardware is working near its limits, the errors can present but be fairly rare or depend on the outer factors like "electrical power network noise caused by powering on a drill in a nearby office". Catching such errors may require 2-3 hours of test run.
+* Lower-frequencies errors. Sometimes faulty memory or GPU can handle high-performance "huge frequency and medium timings" mode but fails to handle the low-performance "low frequency and small timings" mode.
+* Frequency-switch errors. The GPU+memory may work fine at both high- and low-performance modes, but failing at the moment of the switching, while clocks and timings are adjusted.
+
+Testing mode for the two later categories is still under development - it's tricky to check memory operation at lower frequency, since the driver nearly immediate switches to performance mode when load begins. However, v0.4.2 introduces a preliminary attempt to handle this. After initial pre-heat, the load is stopped for 15 seconds and then raises again.
