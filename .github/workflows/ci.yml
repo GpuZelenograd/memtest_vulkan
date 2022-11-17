@@ -17,6 +17,7 @@ jobs:
           key: '${{ github.ref_name }}-cargo'
           path: |
             target/
+            !target/artifacts/
             /cargo/registry/cache/
             /cargo/registry/src/
       - run: ./build-artifacts.sh ${GITHUB_REF_NAME}
