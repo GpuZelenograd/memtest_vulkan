@@ -183,7 +183,7 @@ impl fmt::Debug for DriverVersionDebug {
             return write!(f, "v{}(0x{:X})", upper10bits, self.0);
         }
         let upper20bits = self.0 >> 12;
-        if upper20bits > 2 {
+        if upper20bits > 2 && upper20bits < 2000 {
             //intel-on-windows driver versioning (0x19453c = [30.0.]101.1340)
             return write!(f, "v{}(0x{:X})", upper20bits, self.0);
         }
@@ -191,6 +191,7 @@ impl fmt::Debug for DriverVersionDebug {
             //basic small number versioning like llvm
             return write!(f, "ver{}", self.0);
         }
+        // don't parse AMD versioning like "0x8000E6"
         return write!(f, "0x{:X}", self.0);
     }
 }
