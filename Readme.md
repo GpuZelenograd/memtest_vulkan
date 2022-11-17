@@ -8,7 +8,7 @@ Requires system-provided vulkan loader and driver supporting Vulkan 1.1 (already
 
 ## Installation & Usage
 
-Download Windows .exe from [releases](https://github.com//GpuZelenograd/memtest_vulkan/releases/). GitHub users also may want to try [nightly build artifacts](https://github.com/GpuZelenograd/memtest_vulkan/actions) (only last 3 months kept).
+Download 64-bit Windows .exe from [releases](https://github.com//GpuZelenograd/memtest_vulkan/releases/). GitHub users also may want to try [nightly build artifacts](https://github.com/GpuZelenograd/memtest_vulkan/actions) (only last 3 months kept).
 
 Start test by double-clicking the utility, no installation / parameters / configuration / admin-rights required.
 ![WindowsScreenshot](.github/memtest_vulkan_windows_rtx2070.png)
@@ -155,6 +155,9 @@ Here is the list of common errors that prevent test from starting
 * `memtest_vulkan: early exit during init: The library failed to load`<br>
 This message means that your system lacks the Khronos Group Vulkan-Loader library. This library is used as a multiplexer between different drivers provided for different devices and typically is installed during installation of any device-specific vulkan driver. However, some platforms may need explicit installation: for example, to install it on ubuntu 18.04 run `sudo apt install libvulkan1`.
 Note that this library itself doesn't depend on any GPU, it is loadable even without any vulkan-capable devices at all. So the error above is a pure software-related error, not related to hardware at all.
+* `memtest_vulkan: early exit during init: ERROR_INCOMPATIBLE_DRIVER`<br>
+`memtest_vulkan: early exit during init: ERROR_INITIALIZATION_FAILED`<br>
+Those messages mean that your system lacks the vulkan driver for your GPU or your system doesn't have any vulkan-capable devices. If the device is known to be vulkan-capable try removing all GPU drivers and reinstalling/updating a driver for the device you want to test.
 * `Runtime error: This device lacks support for DEVICE_LOCAL+HOST_COHERENT memory type.` <br>
 Testing of some older pre-2016 GPUs is not supported due to driver/hardware limitations. For example, GTX780Ti on Windows even with latest 472.xx driver reports the message above
 * `INIT OR FIRST testing failed due to runtime error` <br>
