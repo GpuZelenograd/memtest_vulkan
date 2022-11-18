@@ -258,7 +258,7 @@ dependencies = [
 
 [[package]]
 name = "memtest_vulkan"
-version = "0.4.2"
+version = "0.5.0"
 dependencies = [
  "byte-strings",
  "chrono",
