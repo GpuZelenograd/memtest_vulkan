@@ -182,10 +182,10 @@ impl fmt::Debug for DriverVersionDebug {
             // NVIDIA (0x75a04180 = 470.129.06) and intel-mesa-on-linux (0x5402006 = 21.2.6) driver versioning
             return write!(f, "v{}(0x{:X})", upper10bits, self.0);
         }
-        let upper20bits = self.0 >> 12;
-        if upper20bits > 2 && upper20bits < 2000 {
+        let upper18bits = self.0 >> 14;
+        if upper18bits > 2 && upper18bits < 500 {
             //intel-on-windows driver versioning (0x19453c = [30.0.]101.1340)
-            return write!(f, "v{}(0x{:X})", upper20bits, self.0);
+            return write!(f, "v{}(0x{:X})", upper18bits, self.0);
         }
         if self.0 < 64 {
             //basic small number versioning like llvm
