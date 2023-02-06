@@ -193,6 +193,8 @@ The idea inspired by OpenCL-based cross-platform memory testing tool [memtestCL]
 The implementation would not be possible without great vulkan bindings for rust provided by zlib-licensed [erupt library](https://gitlab.com/Friz64/erupt).
 So, for licensing simplicity, memtest_vulkan is also licensed under the [zlib License](https://github.com/GpuZelenograd/memtest_vulkan/blob/main/LICENSE).
 
+The `memtest_vulkan` itself was developed by [GpuZelenograd repair center](https://gpuzelenograd.github.io/README?memtest_vulkan)
+
 ## Video card memory error kinds (theory)
 
 ### Classification of the errors by the "*what* have gone wrong"
