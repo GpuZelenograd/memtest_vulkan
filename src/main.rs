@@ -4,6 +4,7 @@ mod output;
 
 use byte_strings::c_str;
 use core::cmp::{max, min};
+use hhmmss::Hhmmss;
 use erupt::{
     extensions::{ext_debug_utils, ext_memory_budget, ext_pci_bus_info},
     vk, DeviceLoader, EntryLoader, InstanceLoader,
@@ -971,7 +972,8 @@ fn test_device<Writer: std::io::Write>(
     let mut reports_before_standard_done = 12i32;
     let mut write_duration = time::Duration::ZERO;
     let mut buffer_in = IOBuf::for_initial_iteration();
-    let mut start = time::Instant::now();
+    let first_iter_start = time::Instant::now();
+    let mut last_status_output = first_iter_start;
     for iteration in 1..=iter_count {
         unsafe { std::ptr::write(mapped, buffer_in) }
         let write_start = time::Instant::now();
@@ -1039,7 +1041,8 @@ fn test_device<Writer: std::io::Write>(
             }
         }
         read_bytes += test_window_size * test_window_count;
-        let elapsed = start.elapsed();
+        let moment_iter_ends = time::Instant::now();
+        let elapsed = moment_iter_ends - last_status_output;
         let stop_testing = close::close_requested();
         if elapsed > next_report_duration || stop_testing {
             let write_secs = write_duration.as_secs_f32();
@@ -1082,7 +1085,10 @@ fn test_device<Writer: std::io::Write>(
                     "use Ctrl+C to stop it when you decide it's enough"
                 )?;
             } else {
-                writeln!(log_dupler, "{:7} iteration. Passed {:7.4} seconds  written:{:7.1}GB{:6.1}GB/sec        checked:{:7.1}GB{:6.1}GB/sec", iteration, elapsed.as_secs_f32(), written_bytes as f32 / GB, write_speed_gbps, read_bytes as f32 / GB, check_speed_gbps)?;
+                //writeln!(log_dupler, "{:7} iteration. Passed {:7.4} seconds  written:{:7.1}GB{:6.1}GB/sec        checked:{:7.1}GB{:6.1}GB/sec", iteration, elapsed.as_secs_f32(), written_bytes as f32 / GB, write_speed_gbps, read_bytes as f32 / GB, check_speed_gbps)?;
+                let formatted_time_hhmmss = (moment_iter_ends - first_iter_start).hhmmssxxx();
+                writeln!(log_dupler, "time after start {} written:{:7.1}GB{:6.1}GB/sec        checked:{:7.1}GB{:6.1}GB/sec",
+                formatted_time_hhmmss, written_bytes as f32 / GB, write_speed_gbps, read_bytes as f32 / GB, check_speed_gbps)?;
             }
             reports_before_standard_done -= 1;
             if reports_before_standard_done == 0 {
@@ -1093,7 +1099,7 @@ fn test_device<Writer: std::io::Write>(
             written_bytes = 0i64;
             read_bytes = 0i64;
             write_duration = time::Duration::ZERO;
-            start = time::Instant::now();
+            last_status_output = time::Instant::now();
         }
         if stop_testing {
             let _ = writeln!(log_dupler, "received user interruption, testing stopped");
