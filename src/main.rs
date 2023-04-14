@@ -974,6 +974,7 @@ fn test_device<Writer: std::io::Write>(
     let mut buffer_in = IOBuf::for_initial_iteration();
     let first_iter_start = time::Instant::now();
     let mut last_status_output = first_iter_start;
+    let mut last_error_state = "          NO ERRORS       ".to_owned();
     for iteration in 1..=iter_count {
         unsafe { std::ptr::write(mapped, buffer_in) }
         let write_start = time::Instant::now();
@@ -1017,6 +1018,7 @@ fn test_device<Writer: std::io::Write>(
                 if let Some((error_range, total_errors)) =
                     last_buffer_out.get_error_addresses_and_count(test_offset)
                 {
+                    last_error_state = format!("LAST ERROR at {}", first_iter_start.elapsed().hhmmssxxx());
                     close::raise_status_bit(close::app_status::RUNTIME_ERRORS);
                     let test_elems = test_window_size / ELEMENT_SIZE;
                     write!(log_dupler,
@@ -1085,10 +1087,9 @@ fn test_device<Writer: std::io::Write>(
                     "use Ctrl+C to stop it when you decide it's enough"
                 )?;
             } else {
-                //writeln!(log_dupler, "{:7} iteration. Passed {:7.4} seconds  written:{:7.1}GB{:6.1}GB/sec        checked:{:7.1}GB{:6.1}GB/sec", iteration, elapsed.as_secs_f32(), written_bytes as f32 / GB, write_speed_gbps, read_bytes as f32 / GB, check_speed_gbps)?;
                 let formatted_time_hhmmss = (moment_iter_ends - first_iter_start).hhmmssxxx();
-                writeln!(log_dupler, "time after start {} written:{:7.1}GB{:6.1}GB/sec        checked:{:7.1}GB{:6.1}GB/sec",
-                formatted_time_hhmmss, written_bytes as f32 / GB, write_speed_gbps, read_bytes as f32 / GB, check_speed_gbps)?;
+                writeln!(log_dupler, "{}    written:{:7.1}GB{:7.1}GB/s      checked:{:7.1}GB{:7.1}GB/s     {}",
+                last_error_state, written_bytes as f32 / GB, write_speed_gbps, read_bytes as f32 / GB, check_speed_gbps, formatted_time_hhmmss)?;
             }
             reports_before_standard_done -= 1;
             if reports_before_standard_done == 0 {
