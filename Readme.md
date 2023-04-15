@@ -6,9 +6,9 @@ Just start application, wait at least 6 minutes and stop testing by Ctrl+C. Dete
 
 Requires system-provided vulkan loader and driver supporting Vulkan 1.1 (already installed with graphics drivers on most OS).
 
-## Installation & Usage
+## Installation & Usage (Windows)
 
-[⬇Download from latest release](https://github.com//GpuZelenograd/memtest_vulkan/releases/#user-content-Downloads) 64-bit Windows .exe. GitHub users also may want to try [nightly build artifacts](https://github.com/GpuZelenograd/memtest_vulkan/actions) (only last 3 months kept).
+[⬇Download from latest release](https://github.com//GpuZelenograd/memtest_vulkan/releases/#user-content-Downloads) 64-bit .exe. GitHub users also may want to try [nightly build artifacts](https://github.com/GpuZelenograd/memtest_vulkan/actions) (only last 3 months kept).
 
 Start test by double-clicking the utility, no installation / parameters / configuration / admin-rights required.
 ![WindowsScreenshot](.github/memtest_vulkan_windows_rtx2070.png)
@@ -37,7 +37,7 @@ memtest_vulkan: no any errors, testing PASSed.
   press any key to continue...
 ```
 
-### Linux Installation & Usage
+### Installation & Usage (Linux)
 
 Install by unpacking archives with linux prebuilt binaries for X86_64 (Desktop) or AARCH64 (Embedded) from 
 [Releases](https://github.com//GpuZelenograd/memtest_vulkan/releases/) or [nightly build artifacts](https://github.com/GpuZelenograd/memtest_vulkan/actions) (github account required). Build artifacts are transparently produced from source by github actions, but only last 3 months kept.
