@@ -837,8 +837,13 @@ fn test_device<Writer: std::io::Write>(
             Err(err) => last_err = err,
             Ok(some_memory) => {
                 test_memory = Some(some_memory);
-                test_window_count = allocation_size / TEST_WINDOW_MAX_SIZE
-                    + i64::from(allocation_size % TEST_WINDOW_MAX_SIZE != 0);
+                let test_windows_max_size = TEST_WINDOW_SIZE_GRANULARITY;//TEST_WINDOW_MAX_SIZE;
+                test_window_count = allocation_size / test_windows_max_size;
+                if allocation_size % test_windows_max_size != 0 && (test_window_count + 1) * TEST_WINDOW_SIZE_GRANULARITY < allocation_size {
+                    // increase window count so that nearly all allocation_size would be covered by a windows samller then test_windows_max_size;
+                    // however dont reduce window to a size below TEST_WINDOW_SIZE_GRANULARITY
+                    test_window_count += 1;
+                }
                 test_window_count = max(test_window_count, 2); //at least 2 windows: for testing rereads and rws
                 test_window_size = allocation_size / test_window_count;
                 test_window_size =
