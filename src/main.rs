@@ -1569,7 +1569,7 @@ fn test_selected_label<Writer: std::io::Write>(
             }
             match mode {
                 SubprocessMode::NotExeced => {
-                    let _ = writeln!(log_dupler, "Using in-process testing method");
+                    let _ = writeln!(log_dupler, "Subprocess testing method not available!");
                     break;
                 }
                 SubprocessMode::FailedRetryLowerMemory => {
@@ -1577,7 +1577,7 @@ fn test_selected_label<Writer: std::io::Write>(
                     if smaller_memory < MIN_WANTED_ALLOCATION {
                         let _ = writeln!(
                             log_dupler,
-                            "Using in-process testing method with small memory limit {}",
+                            "Subprocess testing method failed even with small memory limit {}",
                             env.max_test_bytes
                         );
                         break;
@@ -1603,7 +1603,8 @@ fn test_selected_label<Writer: std::io::Write>(
                 }
             }
         }
-        let _ = writeln!(log_dupler, "Using in-process testing method");
+        env.verbose = true;
+        let _ = writeln!(log_dupler, "Falled back to verbose in-process test method");
     }
     test_in_this_process(loaded_devices, env, log_dupler)
 }
