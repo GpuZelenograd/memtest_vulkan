@@ -158,9 +158,9 @@ dependencies = [
 
 [[package]]
 name = "erupt"
-version = "0.22.0+204"
+version = "0.23.0+213"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "20754c39f076e1b2d732d8f50031dcea43cebf5c3790f45d7b692ed9669660d1"
+checksum = "95945b435f12bd1b460ae8c87ffb031726d0d5e34c89b9bb8779bb589006962f"
 dependencies = [
  "bitflags",
  "libloading",

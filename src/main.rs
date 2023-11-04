@@ -7,7 +7,7 @@ use core::cmp::{max, min};
 use hhmmss::Hhmmss;
 use erupt::{
     extensions::{ext_debug_utils, ext_memory_budget, ext_pci_bus_info},
-    vk, DeviceLoader, EntryLoader, InstanceLoader,
+    vk, DeviceLoader, EntryLoader, ExtendableFrom, InstanceLoader, ObjectHandle,
 };
 use std::{
     env,
@@ -517,29 +517,27 @@ fn try_fill_default_mem_budget<Writer: std::io::Write>(
         return;
     }
 
-    let mut budget_structure: ext_memory_budget::PhysicalDeviceMemoryBudgetPropertiesEXT =
-        Default::default();
-
     let mut memory_props = unsafe {
         instance.get_physical_device_memory_properties(
             devices_labeled_from_1[selected_index].physical_device,
         )
     };
 
-    let mut budget_request = *vk::PhysicalDeviceMemoryProperties2Builder::new();
+    let mut budget_request =
+        ext_memory_budget::PhysicalDeviceMemoryBudgetPropertiesEXTBuilder::new();
 
     if devices_labeled_from_1[selected_index].has_vk_1_1 {
-        budget_request.p_next = &mut budget_structure
-            as *mut ext_memory_budget::PhysicalDeviceMemoryBudgetPropertiesEXT
-            as *mut c_void;
-        let memory_props2 = unsafe {
+        let mut memory_props2 =
+            vk::PhysicalDeviceMemoryProperties2Builder::new().extend_from(&mut budget_request);
+        unsafe {
             instance.get_physical_device_memory_properties2(
                 devices_labeled_from_1[selected_index].physical_device,
-                Some(budget_request),
-            )
-        };
+                &mut memory_props2,
+            );
+        }
         memory_props = memory_props2.memory_properties;
     }
+    let budget_structure = *budget_request;
     for i in 0..memory_props.memory_heap_count as usize {
         if env.verbose {
             let _ = writeln!(
@@ -1303,26 +1301,24 @@ fn list_devices_ordered_labaled_from_1<Writer: std::io::Write>(
                 None => return None,
             };
 
-            let mut pci_props_structure: ext_pci_bus_info::PhysicalDevicePCIBusInfoPropertiesEXT =
-                Default::default();
             let mut properties = instance.get_physical_device_properties(physical_device);
             let effective_version = (
                 vk::api_version_major(properties.api_version),
                 vk::api_version_minor(properties.api_version),
             );
 
+            let mut pci_structure_request =
+                ext_pci_bus_info::PhysicalDevicePCIBusInfoPropertiesEXTBuilder::new();
             //older vulkan implementations like broadcom on RaspberryPi lacks vk_1_1 support even if application requested it
             let has_vk_1_1 = effective_version >= (1, 1);
             if has_vk_1_1 {
-                let mut pci_structure_request = *vk::PhysicalDeviceProperties2Builder::new();
-                pci_structure_request.p_next = &mut pci_props_structure
-                    as *mut ext_pci_bus_info::PhysicalDevicePCIBusInfoPropertiesEXT
-                    as *mut c_void;
+                let mut device_props2 = vk::PhysicalDeviceProperties2Builder::new()
+                    .extend_from(&mut pci_structure_request);
 
-                properties = instance
-                    .get_physical_device_properties2(physical_device, Some(pci_structure_request))
-                    .properties;
+                instance.get_physical_device_properties2(physical_device, &mut device_props2);
+                properties = device_props2.properties;
             }
+            let pci_props_structure = *pci_structure_request;
             let memory_props = instance.get_physical_device_memory_properties(physical_device);
 
             let mut max_local_heap_size = 0i64;

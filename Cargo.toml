@@ -1,8 +1,5 @@
 #!/usr/bin/env -Scargo run --release --manifest-path
 #cargo fmt
-#cargo build --release --target x86_64-pc-windows-gnu
-#cross build --release --target aarch64-unknown-linux-gnu
-#cross build --release --target x86_64-unknown-linux-gnu
 
 [package]
 edition = '2021'
@@ -33,7 +30,7 @@ version = '0.24.2'
 [dependencies.erupt]
 default-features = false
 features = ['loading']
-version = '0.22'
+version = '0.23'
 
 [dependencies.memtest_vulkan_build]
 path = './memtest_vulkan_build'
@@ -46,9 +43,3 @@ members = ['memtest_vulkan_build']
 codegen-units = 1
 lto = true
 strip = true
-
-[package.metadata.cross.target.x86_64-unknown-linux-gnu]
-image = "ghcr.io/cross-rs/x86_64-unknown-linux-gnu:main-centos"
-
-[package.metadata.cross.target.aarch64-unknown-linux-gnu]
-image = "ghcr.io/cross-rs/aarch64-unknown-linux-gnu:main-centos"
