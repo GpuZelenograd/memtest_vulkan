@@ -1271,6 +1271,7 @@ fn list_devices_ordered_labaled_from_1<Writer: std::io::Write>(
     log_dupler: &mut output::LogDupler<Writer>,
 ) -> Result<LoadedDevices, Box<dyn std::error::Error>> {
     let (instance, entry, messenger) = load_instance(verbose, log_dupler)?;
+    //TODO: handle negative index passed as an internel index for using only single device during enumeration
     let mut compute_capable_devices: Vec<_> = unsafe { instance.enumerate_physical_devices(None) }
         .err_as_str()?
         .into_iter()
@@ -1762,17 +1763,34 @@ fn display_result<Writer: std::io::Write>(
             display_testing_outcome(test_status, env)
         }
         Err(e) => {
-            if !env.interactive {
-                close::immediate_exit(false);
-            }
-            println!();
-            let mut key_reader = input::Reader::default();
-            let _ = writeln!(log_dupler, "memtest_vulkan: early exit during init: {e}");
-            let _ = log_dupler.flush();
             if env.interactive {
+                println!();
+                let mut key_reader = input::Reader::default();
+                //make more readable message about libvulkan
+                let mut error_fmt = format!("{e}");
+                let _ = writeln!(
+                    log_dupler,
+                    "memtest_vulkan: early exit during init: {error_fmt}"
+                );
+                let mut source = e.source();
+                loop {
+                    match source {
+                        Some(inner) => {
+                            let inner_fmt = format!("{inner}");
+                            //exclude duplicate/contained errors
+                            if !error_fmt.contains(&inner_fmt) {
+                                let _ = writeln!(log_dupler, "    due to: {inner_fmt}");
+                                error_fmt = inner_fmt;
+                            }
+                            source = inner.source();
+                        }
+                        None => break,
+                    }
+                }
+                let _ = log_dupler.flush();
                 key_reader.wait_any_key();
+                drop(key_reader); //restore terminal state before exiting
             }
-            drop(key_reader); //restore terminal state before exiting
             close::immediate_exit(false)
         }
     }
