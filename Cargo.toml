@@ -4,13 +4,13 @@
 [package]
 edition = '2021'
 name = 'memtest_vulkan'
-version = '0.5.1'
+version = '0.6.0'
 
 [dependencies]
 byte-strings = '0.2.2'
-mortal = '0.2.3'
-fs4 = '0.6.2'
-chrono = '0.4.19'
+mortal = '0.2.4'
+fs4 = '0.7.0'
+chrono = '0.4.31'
 hhmmss = "0.1.0"
 
 [features]
@@ -19,12 +19,12 @@ verbose = []
 [target.'cfg(windows)'.dependencies.windows-sys]
 default-features = false
 features = ['Win32_System_Console', 'Win32_Foundation', 'Win32_System_Threading']
-version = '0.36.1'
+version = '0.48.0'
 
 [target.'cfg(unix)'.dependencies.nix]
 default-features = false
 features = ['signal']
-version = '0.24.2'
+version = '0.26.4'
 
 
 [dependencies.erupt]
