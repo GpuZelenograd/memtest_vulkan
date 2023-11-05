@@ -505,62 +505,46 @@ fn try_fill_default_mem_budget<Writer: std::io::Write>(
     log_dupler: &mut output::LogDupler<Writer>,
 ) {
     let selected_index = env.effective_index();
-    let LoadedDevices(instance, _, _, devices_labeled_from_1) = &loaded_devices;
-
     if env.verbose {
         let _ = writeln!(
             log_dupler,
             "Loading memory info for selected device index {selected_index}...",
         );
     }
-    if env.max_test_bytes > 0 || selected_index >= devices_labeled_from_1.len() {
+
+    let selected_device = match loaded_devices.3.get(selected_index) {
+        None => return, //don't continue if device index is estimate budget if it is already specified
+        Some(d) => d,
+    };
+
+    if env.max_test_bytes > 0 {
+        //don't estimate budget if it is already specified
         return;
     }
 
-    let mut memory_props = unsafe {
-        instance.get_physical_device_memory_properties(
-            devices_labeled_from_1[selected_index].physical_device,
-        )
-    };
-
-    let mut budget_request =
-        ext_memory_budget::PhysicalDeviceMemoryBudgetPropertiesEXTBuilder::new();
-
-    if devices_labeled_from_1[selected_index].has_vk_1_1 {
-        let mut memory_props2 =
-            vk::PhysicalDeviceMemoryProperties2Builder::new().extend_from(&mut budget_request);
-        unsafe {
-            instance.get_physical_device_memory_properties2(
-                devices_labeled_from_1[selected_index].physical_device,
-                &mut memory_props2,
-            );
-        }
-        memory_props = memory_props2.memory_properties;
-    }
-    let budget_structure = *budget_request;
-    for i in 0..memory_props.memory_heap_count as usize {
+    for i in 0..selected_device.memory_props.memory_heap_count as usize {
         if env.verbose {
             let _ = writeln!(
                 log_dupler,
                 "heap size {:4.1}GB budget {:4.1}GB usage {:4.1}GB flags={:#?}",
-                memory_props.memory_heaps[i].size as f32 / GB,
-                budget_structure.heap_budget[i] as f32 / GB,
-                budget_structure.heap_usage[i] as f32 / GB,
-                memory_props.memory_heaps[i].flags,
+                selected_device.memory_props.memory_heaps[i].size as f32 / GB,
+                selected_device.budget_props.heap_budget[i] as f32 / GB,
+                selected_device.budget_props.heap_usage[i] as f32 / GB,
+                selected_device.memory_props.memory_heaps[i].flags,
             );
         }
-        if !memory_props.memory_heaps[i]
+        if !selected_device.memory_props.memory_heaps[i]
             .flags
             .contains(vk::MemoryHeapFlags::DEVICE_LOCAL)
         {
             continue;
         }
-        let mut heap_free = memory_props.memory_heaps[i].size as i64;
-        let usage = budget_structure.heap_usage[i] as i64;
+        let mut heap_free = selected_device.memory_props.memory_heaps[i].size as i64;
+        let usage = selected_device.budget_props.heap_usage[i] as i64;
         if usage > 0 && usage < heap_free {
             heap_free -= usage;
         }
-        let budget = budget_structure.heap_budget[i] as i64;
+        let budget = selected_device.budget_props.heap_budget[i] as i64;
         if budget > 0 {
             heap_free = min(heap_free, budget);
         }
@@ -581,8 +565,6 @@ fn prepare_and_test_device<Writer: std::io::Write>(
     let device_create_info =
         vk::DeviceCreateInfoBuilder::new().queue_create_infos(&queue_create_info);
 
-    let memory_props =
-        unsafe { instance.get_physical_device_memory_properties(selected.physical_device) };
     let device =
         match unsafe { DeviceLoader::new(instance, selected.physical_device, &device_create_info) }
         {
@@ -679,7 +661,7 @@ fn prepare_and_test_device<Writer: std::io::Write>(
         &pipelines,
         log_dupler,
         &selected.label,
-        memory_props,
+        selected.memory_props,
         env,
     ) {
         display_this_process_result(Some(e), env)
@@ -1126,7 +1108,8 @@ struct NamedComputeDevice {
     label: String,
     physical_device: vk::PhysicalDevice,
     queue_family_index: u32,
-    has_vk_1_1: bool,
+    memory_props: vk::PhysicalDeviceMemoryProperties,
+    budget_props: ext_memory_budget::PhysicalDeviceMemoryBudgetPropertiesEXT,
 }
 
 fn load_instance<Writer: std::io::Write>(
@@ -1309,43 +1292,40 @@ fn list_devices_ordered_labaled_from_1<Writer: std::io::Write>(
 
             let mut pci_structure_request =
                 ext_pci_bus_info::PhysicalDevicePCIBusInfoPropertiesEXTBuilder::new();
+
+            let mut budget_request =
+                ext_memory_budget::PhysicalDeviceMemoryBudgetPropertiesEXTBuilder::new();
+
             //older vulkan implementations like broadcom on RaspberryPi lacks vk_1_1 support even if application requested it
-            let has_vk_1_1 = effective_version >= (1, 1);
-            if has_vk_1_1 {
+
+            let memory_props = if effective_version >= (1, 1) {
                 let mut device_props2 = vk::PhysicalDeviceProperties2Builder::new()
                     .extend_from(&mut pci_structure_request);
 
                 instance.get_physical_device_properties2(physical_device, &mut device_props2);
                 properties = device_props2.properties;
-            }
+                let mut memory_props2 = vk::PhysicalDeviceMemoryProperties2Builder::new()
+                    .extend_from(&mut budget_request);
+                instance
+                    .get_physical_device_memory_properties2(physical_device, &mut memory_props2);
+                memory_props2.memory_properties
+            } else {
+                instance.get_physical_device_memory_properties(physical_device)
+            };
             let pci_props_structure = *pci_structure_request;
-            let memory_props = instance.get_physical_device_memory_properties(physical_device);
-
-            let mut max_local_heap_size = 0i64;
-            for i in 0..memory_props.memory_heap_count as usize {
-                if !memory_props.memory_heaps[i]
-                    .flags
-                    .contains(vk::MemoryHeapFlags::DEVICE_LOCAL)
-                {
-                    continue;
-                }
-                max_local_heap_size = max(
-                    max_local_heap_size,
-                    memory_props.memory_heaps[i].size as i64,
-                );
-            }
+            let budget_props = *budget_request;
 
             Some((
                 physical_device,
                 queue_family,
                 properties,
-                max_local_heap_size,
                 pci_props_structure,
-                has_vk_1_1,
+                memory_props,
+                budget_props,
             ))
         })
         .collect();
-    compute_capable_devices.sort_by_key(|(_, _, props, _, pci_props, _)| {
+    compute_capable_devices.sort_by_key(|(_, _, props, pci_props, _, _)| {
         let negative_bus_for_reverse_ordering = -(pci_props.pci_bus as i32);
         match props.device_type {
             vk::PhysicalDeviceType::DISCRETE_GPU => (0, negative_bus_for_reverse_ordering),
@@ -1356,7 +1336,7 @@ fn list_devices_ordered_labaled_from_1<Writer: std::io::Write>(
     let mut numbered_devices: Vec<NamedComputeDevice> = Vec::new();
     for (i, d) in compute_capable_devices.iter().enumerate() {
         let props = d.2;
-        let pci_props = d.4;
+        let pci_props = d.3;
         let api_info = if verbose {
             std::format!(
                 "API {}.{}.{}  {:?}",
@@ -1368,6 +1348,21 @@ fn list_devices_ordered_labaled_from_1<Writer: std::io::Write>(
         } else {
             String::new()
         };
+
+        let memory_props = d.4;
+        let mut total_mem_estimation = 0i64;
+        for i in 0..memory_props.memory_heap_count as usize {
+            if !memory_props.memory_heaps[i]
+                .flags
+                .contains(vk::MemoryHeapFlags::DEVICE_LOCAL)
+            {
+                continue;
+            }
+            total_mem_estimation = max(
+                total_mem_estimation,
+                memory_props.memory_heaps[i].size as i64,
+            );
+        }
         numbered_devices.push(NamedComputeDevice {
             label: std::format!(
                 "{}: Bus=0x{:02X}:{:02X} DevId=0x{:04X} {api_info}  {}GB {}",
@@ -1375,7 +1370,7 @@ fn list_devices_ordered_labaled_from_1<Writer: std::io::Write>(
                 pci_props.pci_bus,
                 pci_props.pci_device,
                 props.device_id,
-                (d.3 as f32 / GB).ceil(),
+                (total_mem_estimation as f32 / GB).ceil(),
                 unsafe {
                     CStr::from_ptr(props.device_name.as_ptr())
                         .to_str()
@@ -1384,7 +1379,8 @@ fn list_devices_ordered_labaled_from_1<Writer: std::io::Write>(
             ),
             physical_device: d.0,
             queue_family_index: d.1,
-            has_vk_1_1: d.5,
+            memory_props: memory_props,
+            budget_props: d.5,
         });
     }
     Ok(LoadedDevices(instance, entry, messenger, numbered_devices))
