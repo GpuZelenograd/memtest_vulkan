@@ -1,17 +1,17 @@
 mod close;
+mod erupt_vendored_utils_loading;
 mod input;
 mod output;
-mod erupt_vendored_utils_loading;
 
 pub use erupt::{CustomEntryLoader, LoaderError}; // republish for vendored part
 
 use byte_strings::c_str;
 use core::cmp::{max, min};
-use erupt_vendored_utils_loading::{EntryLoader, EntryLoaderImpl};
 use erupt::{
     extensions::{ext_debug_utils, ext_memory_budget, ext_pci_bus_info},
     vk, DeviceLoader, ExtendableFrom, InstanceLoader, ObjectHandle,
 };
+use erupt_vendored_utils_loading::{new_loader, EntryLoader};
 use hhmmss::Hhmmss;
 use std::{
     env,
@@ -197,7 +197,7 @@ impl fmt::Debug for DriverVersionDebug {
             return write!(f, "ver{}", self.0);
         }
         // don't parse AMD versioning like "0x8000E6"
-        return write!(f, "0x{:X}", self.0);
+        write!(f, "0x{:X}", self.0)
     }
 }
 
@@ -1132,7 +1132,7 @@ fn load_instance<Writer: std::io::Write>(
         env::set_var(VK_LOADER_DEBUG, "error,warn");
     }
 
-    let mut entry = EntryLoaderImpl::new()?;
+    let mut entry = new_loader()?;
     if verbose {
         let _ = writeln!(
             log_dupler,
@@ -1238,7 +1238,7 @@ fn load_instance<Writer: std::io::Write>(
             drop(entry);
             //retry instance creation with loader debuf enabled
             env::set_var(VK_LOADER_DEBUG, "all");
-            entry = EntryLoaderImpl::new()?;
+            entry = new_loader()?;
             let debug_instance_try = unsafe {
                 InstanceLoader::new(
                     &entry,
@@ -1384,7 +1384,7 @@ fn list_devices_ordered_labaled_from_1<Writer: std::io::Write>(
             ),
             physical_device: d.0,
             queue_family_index: d.1,
-            memory_props: memory_props,
+            memory_props,
             budget_props: d.5,
         });
     }
@@ -1774,22 +1774,17 @@ fn display_result<Writer: std::io::Write>(
                 let mut error_fmt = format!("{e}");
                 let _ = writeln!(
                     log_dupler,
-                    "memtest_vulkan: early exit during init: {error_fmt}"
+                    "memtest_vulkan early exit during init:\n{error_fmt}"
                 );
                 let mut source = e.source();
-                loop {
-                    match source {
-                        Some(inner) => {
-                            let inner_fmt = format!("{inner}");
-                            //exclude duplicate/contained errors
-                            if !error_fmt.contains(&inner_fmt) {
-                                let _ = writeln!(log_dupler, "    due to: {inner_fmt}");
-                                error_fmt = inner_fmt;
-                            }
-                            source = inner.source();
-                        }
-                        None => break,
+                while let Some(inner) = source {
+                    let inner_fmt = format!("{inner}");
+                    //exclude duplicate/contained errors
+                    if !error_fmt.contains(&inner_fmt) {
+                        let _ = writeln!(log_dupler, "    due to: {inner_fmt}");
+                        error_fmt = inner_fmt;
                     }
+                    source = inner.source();
                 }
                 let _ = log_dupler.flush();
                 key_reader.wait_any_key();
