@@ -11,7 +11,8 @@ byte-strings = '0.2.2'
 mortal = '0.2.4'
 fs4 = '0.7.0'
 chrono = '0.4.31'
-hhmmss = "0.1.0"
+hhmmss = '0.1.0'
+libloading = '0.8.1'
 
 [features]
 verbose = []
@@ -29,7 +30,6 @@ version = '0.26.4'
 
 [dependencies.erupt]
 default-features = false
-features = ['loading']
 version = '0.23'
 
 [dependencies.memtest_vulkan_build]

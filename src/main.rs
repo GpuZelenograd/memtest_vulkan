@@ -1,14 +1,18 @@
 mod close;
 mod input;
 mod output;
+mod erupt_vendored_utils_loading;
+
+pub use erupt::{CustomEntryLoader, LoaderError}; // republish for vendored part
 
 use byte_strings::c_str;
 use core::cmp::{max, min};
-use hhmmss::Hhmmss;
+use erupt_vendored_utils_loading::{EntryLoader, EntryLoaderImpl};
 use erupt::{
     extensions::{ext_debug_utils, ext_memory_budget, ext_pci_bus_info},
-    vk, DeviceLoader, EntryLoader, ExtendableFrom, InstanceLoader, ObjectHandle,
+    vk, DeviceLoader, ExtendableFrom, InstanceLoader, ObjectHandle,
 };
+use hhmmss::Hhmmss;
 use std::{
     env,
     ffi::{c_void, CStr, OsString},
@@ -1118,7 +1122,7 @@ fn load_instance<Writer: std::io::Write>(
 ) -> Result<
     (
         erupt::InstanceLoader,
-        erupt::EntryLoader,
+        EntryLoader,
         vk::DebugUtilsMessengerEXT,
     ),
     Box<dyn std::error::Error>,
@@ -1128,7 +1132,7 @@ fn load_instance<Writer: std::io::Write>(
         env::set_var(VK_LOADER_DEBUG, "error,warn");
     }
 
-    let mut entry = EntryLoader::new()?;
+    let mut entry = EntryLoaderImpl::new()?;
     if verbose {
         let _ = writeln!(
             log_dupler,
@@ -1234,7 +1238,7 @@ fn load_instance<Writer: std::io::Write>(
             drop(entry);
             //retry instance creation with loader debuf enabled
             env::set_var(VK_LOADER_DEBUG, "all");
-            entry = EntryLoader::new()?;
+            entry = EntryLoaderImpl::new()?;
             let debug_instance_try = unsafe {
                 InstanceLoader::new(
                     &entry,
@@ -1249,7 +1253,7 @@ fn load_instance<Writer: std::io::Write>(
 //InstanceLoader must be dropped after EntryLoader
 struct LoadedDevices(
     erupt::InstanceLoader,
-    erupt::EntryLoader,
+    EntryLoader,
     vk::DebugUtilsMessengerEXT,
     Vec<NamedComputeDevice>,
 );
