@@ -214,7 +214,8 @@ Those messages mean that your system lacks the vulkan driver for your GPU or you
 * `Runtime error: This device lacks support for DEVICE_LOCAL+HOST_COHERENT memory type.` <br>
 Testing of some older pre-2016 GPUs is not supported due to driver/hardware limitations. For example, GTX780Ti on Windows even with latest 472.xx driver reports the message above
 * `Runtime error: Failed determining memory budget` on the integrated GPU <br>
-If the integrated GPU is configured with fixed & quite low dedicated memory size - it may be shown in memtest_vulkan output only with 1GB VRAM: `1GB AMD Radeon(TM) Vega 3 Graphics` and then fail. The vulkan implementation for integrated GPUs allows using a bit less memory than reserved, and memtest_vulkan requires at least 1GB available memory to operate. Reconfigure integrated GPU to reserve at least 1.5GB of memory, see [issue #22](https://github.com/GpuZelenograd/memtest_vulkan/issues/22)* `INIT OR FIRST testing failed due to runtime error` <br>
+If the integrated GPU is configured with fixed & quite low dedicated memory size - it may be shown in memtest_vulkan output only with 1GB VRAM: `1GB AMD Radeon(TM) Vega 3 Graphics` and then fail. The vulkan implementation for integrated GPUs allows using a bit less memory than reserved, and memtest_vulkan requires at least 1GB available memory to operate. Reconfigure integrated GPU to reserve at least 1.5GB of memory, see [issue #22](https://github.com/GpuZelenograd/memtest_vulkan/issues/22)
+* `INIT OR FIRST testing failed due to runtime error` <br>
 If the test fails to start and shows this message for a newer GPU - there is some incompatibility in vulkan installation. This may be caused by outdated driver or conflicts between several vulkan drivers installed. <br> <br>
 For example on Linux the test can be run with a specific ICD the following way:<br>
 `VK_DRIVER_FILES=/usr/share/vulkan/icd.d/nvidia_icd.json ./memtest_vulkan`<br>
