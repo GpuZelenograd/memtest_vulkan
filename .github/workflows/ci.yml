@@ -11,8 +11,8 @@ jobs:
     runs-on: ubuntu-22.04
     container: ghcr.io/galkinvv/manycross2014:rust-1.64
     steps:
-      - uses: actions/checkout@v3
-      - uses: actions/cache@v3
+      - uses: actions/checkout@v4
+      - uses: actions/cache@v4
         with:
           key: '${{ github.ref_name }}-cargo'
           path: |
@@ -21,11 +21,11 @@ jobs:
             /cargo/registry/cache/
             /cargo/registry/src/
       - run: ./build-artifacts.sh ${GITHUB_REF_NAME}
-      - uses: actions/upload-artifact@v3
+      - uses: actions/upload-artifact@v4
         with:
           name: Windows .exe
           path: target/artifacts/*.exe
-      - uses: actions/upload-artifact@v3
+      - uses: actions/upload-artifact@v4
         with:
           name: Linux binaries (x86_64 and aarch64)
           path: target/artifacts/*Linux*
