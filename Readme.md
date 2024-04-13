@@ -45,6 +45,7 @@ memtest_vulkan: no any errors, testing PASSed.
 Install by unpacking archives with linux prebuilt binaries for X86_64 (Desktop) or AARCH64 (Embedded) from 
 [Releases](https://github.com//GpuZelenograd/memtest_vulkan/releases#user-content-Downloads) or [nightly build artifacts](https://github.com/GpuZelenograd/memtest_vulkan/actions) (github account required). Build artifacts are transparently produced from source by github actions, but only last 3 months kept.
 
+Use by opening a terminal in a folder with extracted file and explicitely running `./memtest_vulkan`. Do NOT just double-click binary in GUI (it would lead to starting test in the background without ability to stop it - [issue](https://github.com/GpuZelenograd/memtest_vulkan/issues/11))
 
 Linux platform often contains additional `llvmpipe` pure-CPU vulkan driver. So after the start device selection menu will be shown. You can wait 10 seconds for automatic device selection or manually type the device number to test
 ![LinuxScreenshot](.github/linux-laptop-igpu.png)
