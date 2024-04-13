@@ -9,10 +9,9 @@ on:
 jobs:
   build-in-docker-job:
     runs-on: ubuntu-22.04
-    container: ghcr.io/galkinvv/manycross2014:rust-1.64
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/cache@v4
+      - uses: actions/checkout@v3
+      - uses: actions/cache@v3
         with:
           key: '${{ github.ref_name }}-cargo'
           path: |
@@ -20,8 +19,10 @@ jobs:
             !target/artifacts/
             /cargo/registry/cache/
             /cargo/registry/src/
-      - run: ./build-artifacts.sh ${GITHUB_REF_NAME}
-      - uses: actions/upload-artifact@v4
+      - uses: docker://ghcr.io/galkinvv/manycross2014:rust-1.64
+        with:
+          entrypoint: ./build-artifacts.sh ${GITHUB_REF_NAME}
+      - uses: actions/upload-artifact@v3
         with:
           name: Windows .exe
           path: target/artifacts/*.exe
