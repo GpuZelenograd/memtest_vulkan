@@ -21,7 +21,7 @@ jobs:
             /cargo/registry/src/
       - uses: docker://ghcr.io/galkinvv/manycross2014:rust-1.64
         with:
-          entrypoint: ./build-artifacts.sh ${GITHUB_REF_NAME}
+          entrypoint: ./build-artifacts.sh
       - uses: actions/upload-artifact@v3
         with:
           name: Windows .exe
