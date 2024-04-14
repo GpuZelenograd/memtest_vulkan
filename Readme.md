@@ -8,7 +8,7 @@ Requires system-provided vulkan loader and driver supporting Vulkan 1.1 (already
 
 ## Installation & Usage (Windows)
 
-[⬇Get 64-bit .exe from latest release](https://github.com//GpuZelenograd/memtest_vulkan/releases#user-content-Downloads). GitHub users also may want to try [nightly build artifacts](https://github.com/GpuZelenograd/memtest_vulkan/actions) (only last 3 months kept).
+[⬇Get 64-bit .exe from latest release](https://github.com//GpuZelenograd/memtest_vulkan/releases#user-content-Downloads). GitHub users also may want to try [CI build artifacts](https://github.com/GpuZelenograd/memtest_vulkan/actions) (only last 3 months kept).
 
 Start test by double-clicking the utility, no installation / parameters / configuration / admin-rights required.
 ![WindowsScreenshot](.github/memtest_vulkan_windows_rtx2070.png)
@@ -43,7 +43,7 @@ memtest_vulkan: no any errors, testing PASSed.
 ### Installation & Usage (Linux)
 
 Install by unpacking archives with linux prebuilt binaries for X86_64 (Desktop) or AARCH64 (Embedded) from 
-[Releases](https://github.com//GpuZelenograd/memtest_vulkan/releases#user-content-Downloads) or [nightly build artifacts](https://github.com/GpuZelenograd/memtest_vulkan/actions) (github account required). Build artifacts are transparently produced from source by github actions, but only last 3 months kept.
+[Releases](https://github.com//GpuZelenograd/memtest_vulkan/releases#user-content-Downloads) or [![ci build](https://github.com/GpuZelenograd/memtest_vulkan/actions/workflows/ci.yml/badge.svg) artifacts](https://github.com/GpuZelenograd/memtest_vulkan/actions) (github account required). Build artifacts are transparently produced from source by github actions, but only last 3 months kept.
 
 Use by opening a terminal in a folder with extracted file and explicitely running `./memtest_vulkan`. Do NOT just double-click binary in GUI (it would lead to starting test in the background without ability to stop it - [issue](https://github.com/GpuZelenograd/memtest_vulkan/issues/11))
 
