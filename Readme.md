@@ -45,7 +45,7 @@ memtest_vulkan: no any errors, testing PASSed.
 Install by unpacking archives with linux prebuilt binaries for X86_64 (Desktop) or AARCH64 (Embedded) from 
 [Releases](https://github.com//GpuZelenograd/memtest_vulkan/releases#user-content-Downloads) or [![ci build](https://github.com/GpuZelenograd/memtest_vulkan/actions/workflows/ci.yml/badge.svg) artifacts](https://github.com/GpuZelenograd/memtest_vulkan/actions) (github account required). Build artifacts are transparently produced from source by github actions, but only last 3 months kept.
 
-Use by opening a terminal in a folder with extracted file and explicitely running `./memtest_vulkan`. Do NOT just double-click binary in GUI (it would lead to starting test in the background without ability to stop it - [issue](https://github.com/GpuZelenograd/memtest_vulkan/issues/11))
+Use by opening a terminal in a folder with extracted file and explicitly running `./memtest_vulkan`. Do NOT just double-click binary in GUI (it would lead to starting test in the background without ability to stop it - [issue](https://github.com/GpuZelenograd/memtest_vulkan/issues/11))
 
 Linux platform often contains additional `llvmpipe` pure-CPU vulkan driver. So after the start device selection menu will be shown. You can wait 10 seconds for automatic device selection or manually type the device number to test
 ![LinuxScreenshot](.github/linux-laptop-igpu.png)
@@ -164,7 +164,7 @@ memtest_vulkan: no any errors, testing PASSed.
 
 The _only_ simple thing in result interpreting - is "If some errors are reported by memtest_vulkan - the PC has hardware problems". Most often GPU-related, but its hard to be sure if the problem is VRAM IC - related or GPU chip related.
 
-You can create [topic in siscussions](https://github.com/GpuZelenograd/memtest_vulkan/discussions/new?category=card-specific-memtest_vulkan-error-logs), sometimes the error log can be interpreted. Bust most of the times it is quite complex task, expand the theory section below
+You can create [topic in discussions](https://github.com/GpuZelenograd/memtest_vulkan/discussions/new?category=card-specific-memtest_vulkan-error-logs), sometimes the error log can be interpreted. Bust most of the time it is quite complex task, expand the theory section below
 
 <details><summary>
       
