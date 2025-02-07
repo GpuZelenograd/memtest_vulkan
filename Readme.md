@@ -198,9 +198,8 @@ TogglCnt                2|   7  18   95 264| 8451786 40056770| 11k 15k  20k 23k
 * Simplest situation: "errors appears immediately when GPU+memory operates at given frequency". The tests report such nearly immediately.
 * Temperature-dependent: sometimes the system works fine at room temperature but after getting hot due to continuous load the errors are coming. To catch such errors some pre-heat time is needed, the 5-6 minutes of standard test are designed exactly to wait for achieving higher temperatures.
 * Near-the-limit, rare-occurring errors. When hardware is working near its limits, the errors can present but be fairly rare or depend on the outer factors like "electrical power network noise caused by powering on a drill in a nearby office". Catching such errors may require 2-3 hours of test run.
-* Lower-frequencies errors. Sometimes faulty memory or GPU can handle high-performance "huge frequency and medium timings" mode but fails to handle the low-performance "low frequency and small timings" mode.
-* Frequency-switch errors. The GPU+memory may work fine at both high- and low-performance modes, but failing at the moment of the switching, while clocks and timings are adjusted.
-
+* Lower-frequency errors. Sometimes faulty memory or GPU can handle high-performance "huge frequency and medium timings" mode but fails to handle the low-performance "low frequency and small timings" mode. Such errors are hard to catch; the standard 5-6 minute test sometimes catches them during a special "several seconds pause of load" at the beginning of the 5-th minute, but that is not a reliable method.
+* Frequency-switch errors. The GPU+memory may work fine at both high- and low-performance modes, but it may fail at the moment of the switching while clocks and timings are adjusted. Similar to above, hard to catch, sometimes caught at the beginning of the 5th minute.
 Testing mode for the two later categories is still under development - it's tricky to check memory operation at lower frequency, since the driver nearly immediate switches to performance mode when load begins. However, v0.5 introduces a preliminary attempt to handle this. After initial pre-heat, the load is stopped for 15 seconds and then raises again.
 </details>
 
