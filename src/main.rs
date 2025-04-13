@@ -1083,6 +1083,7 @@ fn test_device<Writer: std::io::Write>(
                 )?;
             } else {
                 writeln!(log_dupler, "{:7} iteration. Passed {:7.4} seconds  written:{:7.1}GB{:6.1}GB/sec        checked:{:7.1}GB{:6.1}GB/sec", iteration, elapsed.as_secs_f32(), written_bytes as f32 / GB, write_speed_gbps, read_bytes as f32 / GB, check_speed_gbps)?;
+                writeln!(log_dupler, "{:.1} minutes passed.", prompt_start.elapsed.as_secs_f32() * 60)?;
             }
             reports_before_standard_done -= 1;
             if reports_before_standard_done == 0 {
