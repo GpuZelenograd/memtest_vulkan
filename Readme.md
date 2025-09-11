@@ -207,7 +207,7 @@ Testing mode for the two later categories is still under development - it's tric
 Here is the list of common errors that prevent test from starting
 * `memtest_vulkan: early exit during init: The library failed to load`<br>
 This message means that your system lacks the Khronos Group Vulkan-Loader library. This library is used as a multiplexer between different drivers provided for different devices and typically is installed during installation of any device-specific vulkan driver. However, some platforms may need explicit installation: for example, to install it on ubuntu 18.04 run `sudo apt install libvulkan1`.
-Note that this library itself doesn't depend on any GPU, it is loadable even without any vulkan-capable devices at all. So the error above is a pure software-related error, not related to hardware at all.
+Note that this library itself doesn't depend on any GPU, it is loadable even without any vulkan-capable devices at all. So the error above is a pure software-related error, not related to hardware at all. For windows7 x64 you may need [downloading `vulkan-1.dll` manually](https://github.com/GpuZelenograd/memtest_vulkan/releases/tag/support).
 * `memtest_vulkan: early exit during init: ERROR_INCOMPATIBLE_DRIVER`<br>
 `memtest_vulkan: early exit during init: ERROR_INITIALIZATION_FAILED`<br>
 Those messages mean that your system lacks the vulkan driver for your GPU or your system doesn't have any vulkan-capable devices. If the device is known to be vulkan-capable try removing all GPU drivers and reinstalling/updating a driver for the device you want to test.
