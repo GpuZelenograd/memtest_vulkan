@@ -1019,7 +1019,8 @@ fn test_device<Writer: std::io::Write>(
                 if let Some((error_range, total_errors)) =
                     last_buffer_out.get_error_addresses_and_count(test_offset)
                 {
-                    last_error_state = format!("LAST ERROR at {}", first_iter_start.elapsed().hhmmssxxx());
+                    last_error_state =
+                        format!("LAST ERROR at {}", first_iter_start.elapsed().hhmmssxxx());
                     close::raise_status_bit(close::app_status::RUNTIME_ERRORS);
                     let test_elems = test_window_size / ELEMENT_SIZE;
                     write!(log_dupler,
@@ -1089,8 +1090,16 @@ fn test_device<Writer: std::io::Write>(
                 )?;
             } else {
                 let formatted_time_hhmmss = (moment_iter_ends - first_iter_start).hhmmssxxx();
-                writeln!(log_dupler, "{}    written:{:7.1}GB{:7.1}GB/s      checked:{:7.1}GB{:7.1}GB/s     {}",
-                last_error_state, written_bytes as f32 / GB, write_speed_gbps, read_bytes as f32 / GB, check_speed_gbps, formatted_time_hhmmss)?;
+                writeln!(
+                    log_dupler,
+                    "{}    written:{:7.1}GB{:7.1}GB/s      checked:{:7.1}GB{:7.1}GB/s     {}",
+                    last_error_state,
+                    written_bytes as f32 / GB,
+                    write_speed_gbps,
+                    read_bytes as f32 / GB,
+                    check_speed_gbps,
+                    formatted_time_hhmmss
+                )?;
             }
             reports_before_standard_done -= 1;
             if reports_before_standard_done == 0 {
@@ -1268,24 +1277,45 @@ fn load_instance<Writer: std::io::Write>(
         }
     }
 }
-//InstanceLoader must be dropped after EntryLoader
-struct LoadedDevices(
-    erupt::InstanceLoader,
-    EntryLoader,
-    vk::DebugUtilsMessengerEXT,
-    Vec<NamedComputeDevice>,
-);
+struct LoadedDevices {
+    // use Option to enforce InstanceLoader must be dropped before EntryLoader inside Drop implementation;
+    // outside Drop theay are always Some
+    instance: Option<erupt::InstanceLoader>,
+    entry: Option<EntryLoader>,
+    messenger: vk::DebugUtilsMessengerEXT,
+    devices: Vec<NamedComputeDevice>,
+}
 
+impl LoadedDevices {
+    pub fn instance(&self) -> &erupt::InstanceLoader {
+        &self.instance.as_ref().unwrap()
+    }
+    pub fn new(
+        instance: erupt::InstanceLoader,
+        entry: EntryLoader,
+        messenger: vk::DebugUtilsMessengerEXT,
+        devices: Vec<NamedComputeDevice>,
+    ) -> LoadedDevices {
+        LoadedDevices {
+            instance: Some(instance),
+            entry: Some(entry),
+            messenger,
+            devices,
+        }
+    }
+}
 impl Drop for LoadedDevices {
     fn drop(&mut self) {
-        let LoadedDevices(instance, _, messenger, _) = self;
         unsafe {
             println!("Destroying vk instance...");
-            if !messenger.is_null() {
-                instance.destroy_debug_utils_messenger_ext(*messenger, None);
+            if !self.messenger.is_null() {
+                self.instance()
+                    .destroy_debug_utils_messenger_ext(self.messenger, None);
             }
-            instance.destroy_instance(None);
+            self.instance().destroy_instance(None);
         }
+        self.instance = None;
+        self.entry = None;
     }
 }
 fn list_devices_ordered_labaled_from_1<Writer: std::io::Write>(
@@ -1415,7 +1445,12 @@ fn list_devices_ordered_labaled_from_1<Writer: std::io::Write>(
             index_in_device_iteration: d.6,
         });
     }
-    Ok(LoadedDevices(instance, entry, messenger, numbered_devices))
+    Ok(LoadedDevices::new(
+        instance,
+        entry,
+        messenger,
+        numbered_devices,
+    ))
 }
 
 fn prompt_for_label(verbose: bool) -> Option<isize> {
@@ -1512,9 +1547,8 @@ fn test_selected_label<Writer: std::io::Write>(
     log_dupler: &mut output::LogDupler<Writer>,
 ) -> Result<(Option<LoadedDevices>, TestStatus), Box<dyn std::error::Error>> {
     // prevent running drop on loaded_devices
-    let LoadedDevices(instance, _, _, single_dev_collection) = &loaded_devices;
 
-    match single_dev_collection.as_slice() {
+    match loaded_devices.devices.as_slice() {
         [single_dev] => {
             if env.interactive {
                 let mut mode;
@@ -1632,7 +1666,7 @@ fn test_selected_label<Writer: std::io::Write>(
                 let _ = writeln!(log_dupler, "Falled back to verbose in-process test method");
             }
 
-            test_in_this_process(instance, single_dev, env, log_dupler);
+            test_in_this_process(loaded_devices.instance(), single_dev, env, log_dupler);
         }
         _ => {
             env.make_verbose();
@@ -1646,12 +1680,11 @@ fn init_vk_and_check_errors<Writer: std::io::Write>(
     log_dupler: &mut output::LogDupler<Writer>,
 ) -> Result<(Option<LoadedDevices>, TestStatus), Box<dyn std::error::Error>> {
     if env.interactive {
-        let LoadedDevices(_, _, _, devices_labeled_from_1) = &loaded_devices;
         let _ = writeln!(log_dupler,);
-        for desc in devices_labeled_from_1.iter() {
+        for desc in loaded_devices.devices.iter() {
             let _ = writeln!(log_dupler, "{}", desc.label);
         }
-        if devices_labeled_from_1.len() > 1 {
+        if loaded_devices.devices.len() > 1 {
             if let Some(selected_label) = prompt_for_label(env.verbose()) {
                 env.device_label.store(selected_label, SeqCst);
             } else {
@@ -1662,8 +1695,8 @@ fn init_vk_and_check_errors<Writer: std::io::Write>(
     }
 
     let index_from_1 = env.effective_index_in_loaded_devices() + 1;
-    let available_len = loaded_devices.3.len();
-    let selected = match std::mem::take(&mut loaded_devices.3)
+    let available_len = loaded_devices.devices.len();
+    let selected = match std::mem::take(&mut loaded_devices.devices)
         .into_iter()
         .nth(index_from_1 - 1)
     {
@@ -1675,7 +1708,7 @@ fn init_vk_and_check_errors<Writer: std::io::Write>(
     };
 
     try_fill_default_mem_budget(&selected, env, log_dupler);
-    loaded_devices.3 = vec![selected];
+    loaded_devices.devices = vec![selected];
 
     test_selected_label(loaded_devices, env, log_dupler)
 }
