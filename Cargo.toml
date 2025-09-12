@@ -20,7 +20,7 @@ verbose = []
 [target.'cfg(windows)'.dependencies.windows-sys]
 default-features = false
 features = ['Win32_System_Console', 'Win32_Foundation', 'Win32_System_Threading']
-version = '0.48.0'
+version = '0.61.0'
 
 [target.'cfg(unix)'.dependencies.nix]
 default-features = false

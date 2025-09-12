@@ -65,8 +65,8 @@ pub fn setup_handler(graceful: bool) {
 
 #[cfg(windows)]
 pub fn setup_handler_impl() {
-    use windows_sys::Win32::{self, System::Console};
-    unsafe extern "system" fn os_handler(ctrltype: u32) -> Win32::Foundation::BOOL {
+    use windows_sys::Win32::System::Console;
+    unsafe extern "system" fn os_handler(ctrltype: u32) -> windows_sys::core::BOOL {
         let quit_job = ctrltype != Console::CTRL_C_EVENT;
         report_interrupt_request(quit_job);
         if quit_job {
