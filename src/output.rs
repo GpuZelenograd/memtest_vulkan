@@ -1,5 +1,5 @@
 use core::fmt;
-use fs4::FileExt;
+use fs4::fs_std::FileExt;
 use std::{
     collections::VecDeque,
     fs::File,

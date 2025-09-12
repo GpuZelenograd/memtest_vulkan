@@ -7,12 +7,12 @@ name = 'memtest_vulkan'
 version = '0.6.0'
 
 [dependencies]
-byte-strings = '0.2.2'
+byte-strings = '0.3.1'
 mortal = '0.2.4'
-fs4 = '0.7.0'
-chrono = '0.4.31'
+fs4 = '0.13.1'
+chrono = '0.4.42'
 hhmmss = '0.1.0'
-libloading = '0.8.1'
+libloading = '0.8.8'
 
 [features]
 verbose = []
@@ -25,7 +25,7 @@ version = '0.48.0'
 [target.'cfg(unix)'.dependencies.nix]
 default-features = false
 features = ['signal']
-version = '0.26.4'
+version = '0.30.1'
 
 
 [dependencies.erupt]
