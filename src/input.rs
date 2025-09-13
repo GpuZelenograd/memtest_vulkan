@@ -1,5 +1,5 @@
-use mortal::terminal::Key;
 use mortal::Event;
+use mortal::terminal::Key;
 
 use std::io::Write;
 
