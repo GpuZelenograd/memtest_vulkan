@@ -1,19 +1,17 @@
 #!/usr/bin/env -Scargo run --release --manifest-path
 #cargo fmt
-#cargo build --release --target x86_64-pc-windows-gnu
-#cross build --release --target aarch64-unknown-linux-gnu
-#cross build --release --target x86_64-unknown-linux-gnu
 
 [package]
-edition = '2021'
+edition = '2024'
 name = 'memtest_vulkan'
-version = '0.5.0'
+version = '0.6.0'
 
 [dependencies]
-byte-strings = '0.2.2'
-mortal = '0.2.3'
-fs4 = '0.6.2'
-chrono = '0.4.19'
+byte-strings = '0.3.1'
+mortal = '0.2.4'
+chrono = '0.4.42'
+hhmmss = '0.1.0'
+libloading = '0.8.8'
 
 [features]
 verbose = []
@@ -21,18 +19,17 @@ verbose = []
 [target.'cfg(windows)'.dependencies.windows-sys]
 default-features = false
 features = ['Win32_System_Console', 'Win32_Foundation', 'Win32_System_Threading']
-version = '0.36.1'
+version = '0.60.2'
 
 [target.'cfg(unix)'.dependencies.nix]
 default-features = false
 features = ['signal']
-version = '0.24.2'
+version = '0.30.1'
 
 
 [dependencies.erupt]
 default-features = false
-features = ['loading']
-version = '0.22'
+version = '0.23'
 
 [dependencies.memtest_vulkan_build]
 path = './memtest_vulkan_build'
@@ -45,9 +42,3 @@ members = ['memtest_vulkan_build']
 codegen-units = 1
 lto = true
 strip = true
-
-[package.metadata.cross.target.x86_64-unknown-linux-gnu]
-image = "ghcr.io/cross-rs/x86_64-unknown-linux-gnu:main-centos"
-
-[package.metadata.cross.target.aarch64-unknown-linux-gnu]
-image = "ghcr.io/cross-rs/aarch64-unknown-linux-gnu:main-centos"

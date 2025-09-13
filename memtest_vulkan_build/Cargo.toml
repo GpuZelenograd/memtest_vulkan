@@ -1,11 +1,11 @@
 [package]
-edition = '2021'
+edition = '2024'
 name = 'memtest_vulkan_build'
 version = '0.0.0'
 
 [dependencies]
 quote = '1.0'
-syn = '1.0'
+syn = '2.0'
 
 [dependencies.naga]
 default-features = false
@@ -13,7 +13,7 @@ features = [
     'wgsl-in',
     'spv-out',
 ]
-version = '0.9'
+version = '0.10.1'
 
 [lib]
 proc-macro = true
