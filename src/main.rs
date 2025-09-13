@@ -1869,8 +1869,7 @@ fn display_testing_outcome(test_status: TestStatus, env: &ProcessEnv) -> ! {
         }
     }
     if env.interactive {
-        close::prefer_immediate_to_graceful();
-        key_reader.wait_any_key();
+        key_reader.wait_any_key(true);
     }
     drop(key_reader); //restore terminal state before exiting
     close::immediate_exit(false)
@@ -1907,9 +1906,8 @@ fn display_result<Writer: std::io::Write>(
                 }
                 let _ = log_dupler.flush();
                 if env.interactive {
-                    close::prefer_immediate_to_graceful();
                     let mut key_reader = input::Reader::default();
-                    key_reader.wait_any_key();
+                    key_reader.wait_any_key(true);
                     drop(key_reader); //restore terminal state before exiting
                 }
             }

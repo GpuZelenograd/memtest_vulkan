@@ -83,7 +83,7 @@ impl Reader {
         }));
     }
 
-    pub fn wait_any_key(&mut self) {
+    pub fn wait_any_key(&mut self, immediate_close_on_signal_during_wait: bool) {
         if crate::close::close_requested() {
             //interaction methods not available while closing on windows
             let seconds_wait = 3;
@@ -107,6 +107,9 @@ impl Reader {
         if !self.try_prepare_terminal() {
             //terminal input not available, don't perform wait.
             return;
+        }
+        if immediate_close_on_signal_during_wait {
+            crate::close::prefer_immediate_to_graceful();
         }
         let terminal = self.terminal.as_ref().unwrap();
         loop {
