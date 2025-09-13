@@ -8,14 +8,15 @@ pub use erupt::{CustomEntryLoader, LoaderError}; // republish for vendored part
 use byte_strings::c_str;
 use core::cmp::{max, min};
 use erupt::{
+    DeviceLoader, ExtendableFrom, InstanceLoader, ObjectHandle,
     extensions::{ext_debug_utils, ext_memory_budget, ext_pci_bus_info},
-    vk, DeviceLoader, ExtendableFrom, InstanceLoader, ObjectHandle,
+    vk,
 };
-use erupt_vendored_utils_loading::{new_loader, EntryLoader};
+use erupt_vendored_utils_loading::{EntryLoader, new_loader};
 use hhmmss::Hhmmss;
 use std::{
     env,
-    ffi::{c_void, CStr, OsString},
+    ffi::{CStr, OsString, c_void},
     fmt,
     io::Write,
     mem,
@@ -489,17 +490,15 @@ unsafe extern "system" fn debug_callback(
     p_callback_data: *const vk::DebugUtilsMessengerCallbackDataEXT,
     _p_user_data: *mut c_void,
 ) -> vk::Bool32 {
-    eprintln!(
-        "{}",
-        CStr::from_ptr((*p_callback_data).p_message).to_string_lossy()
-    );
+    let cstr_message = unsafe { CStr::from_ptr((*p_callback_data).p_message) };
 
+    eprintln!("{}", cstr_message.to_string_lossy());
     vk::FALSE
 }
 fn memory_requirements(
     device: &erupt::DeviceLoader,
     min_wanted_allocation: i64,
-) -> Result<(vk::MemoryRequirements, vk::BufferCreateInfoBuilder), Box<dyn std::error::Error>> {
+) -> Result<(vk::MemoryRequirements, vk::BufferCreateInfoBuilder<'_>), Box<dyn std::error::Error>> {
     let test_buffer_create_info = vk::BufferCreateInfoBuilder::new()
         .sharing_mode(vk::SharingMode::EXCLUSIVE)
         .usage(vk::BufferUsageFlags::STORAGE_BUFFER)
@@ -579,9 +578,11 @@ fn prepare_and_test_device<Writer: std::io::Write>(
     env: &ProcessEnv,
     log_dupler: &mut output::LogDupler<Writer>,
 ) -> ! {
-    let queue_create_info = vec![vk::DeviceQueueCreateInfoBuilder::new()
-        .queue_family_index(selected.queue_family_index)
-        .queue_priorities(&[1.0])];
+    let queue_create_info = vec![
+        vk::DeviceQueueCreateInfoBuilder::new()
+            .queue_family_index(selected.queue_family_index)
+            .queue_priorities(&[1.0]),
+    ];
 
     let device_create_info =
         vk::DeviceCreateInfoBuilder::new().queue_create_infos(&queue_create_info);
@@ -943,7 +944,11 @@ fn test_device<Writer: std::io::Write>(
         }
         if warn_on_budget_alloc_fail {
             warn_on_budget_alloc_fail = false;
-            let _ = writeln!(log_dupler, "Failed allocating {:5.1}GB, trying to use smaller size. More system memory can help.", allocation_size as f32 / GB);
+            let _ = writeln!(
+                log_dupler,
+                "Failed allocating {:5.1}GB, trying to use smaller size. More system memory can help.",
+                allocation_size as f32 / GB
+            );
         }
         allocation_size -= ALLOCATION_TRY_STEP;
     }
@@ -1023,7 +1028,8 @@ fn test_device<Writer: std::io::Write>(
                         format!("LAST ERROR at {}", first_iter_start.elapsed().hhmmssxxx());
                     close::raise_status_bit(close::app_status::RUNTIME_ERRORS);
                     let test_elems = test_window_size / ELEMENT_SIZE;
-                    write!(log_dupler,
+                    write!(
+                        log_dupler,
                         "Error found. Mode {}, total errors 0x{:X} out of 0x{:X} ({:2.8}%)\nErrors address range: {:?}",
                         if reread_mode_for_this_win {
                             "NEXT_RE_READ"
@@ -1032,7 +1038,7 @@ fn test_device<Writer: std::io::Write>(
                         },
                         total_errors,
                         test_elems,
-                        total_errors as f64/test_elems as f64 * 100.0f64,
+                        total_errors as f64 / test_elems as f64 * 100.0f64,
                         error_range,
                     )?;
                     writeln!(
@@ -1078,7 +1084,10 @@ fn test_device<Writer: std::io::Write>(
                 );
                 match has_errors {
                     true => writeln!(log_dupler, "Standard 5-minute test fail - ERRORS FOUND"),
-                    false => writeln!(log_dupler, "Standard 5-minute test PASSed! Just press Ctrl+C unless you plan long test run."),
+                    false => writeln!(
+                        log_dupler,
+                        "Standard 5-minute test PASSed! Just press Ctrl+C unless you plan long test run."
+                    ),
                 }?;
                 writeln!(
                     log_dupler,
@@ -1156,7 +1165,8 @@ fn load_instance<Writer: std::io::Write>(
 > {
     let override_vk_loader_debug = env::var_os(VK_LOADER_DEBUG).is_none();
     if env.verbose() && override_vk_loader_debug {
-        env::set_var(VK_LOADER_DEBUG, "error,warn");
+        // memtest_vulkan is single-threaded during init.
+        unsafe { env::set_var(VK_LOADER_DEBUG, "error,warn") };
     }
 
     let mut entry = new_loader()?;
@@ -1263,8 +1273,9 @@ fn load_instance<Writer: std::io::Write>(
                 return Err(e);
             }
             drop(entry);
-            //retry instance creation with loader debuf enabled
-            env::set_var(VK_LOADER_DEBUG, "all");
+            //retry instance creation with loader debug enabled
+            // memtest_vulkan is single-threaded during init.
+            unsafe { env::set_var(VK_LOADER_DEBUG, "all") };
             entry = new_loader()?;
             let debug_instance_try = unsafe {
                 InstanceLoader::new(
@@ -1288,7 +1299,7 @@ struct LoadedDevices {
 
 impl LoadedDevices {
     pub fn instance(&self) -> &erupt::InstanceLoader {
-        &self.instance.as_ref().unwrap()
+        self.instance.as_ref().unwrap()
     }
     pub fn new(
         instance: erupt::InstanceLoader,
@@ -1555,69 +1566,73 @@ fn test_selected_label<Writer: std::io::Write>(
                 let mut main_code: u8 = 0;
                 loop {
                     mode = SubprocessMode::NotExeced;
-                    if let Some(argv0) = &env.argv0 {
-                        if let Ok(mut child) = std::process::Command::new(argv0)
+                    if let Some(argv0) = &env.argv0
+                        && let Ok(mut child) = std::process::Command::new(argv0)
                             .arg((-1 - (single_dev.index_in_device_iteration as isize)).to_string())
                             .arg(env.max_test_bytes.load(SeqCst).to_string())
                             .spawn()
-                        {
-                            if env.verbose() {
+                    {
+                        if env.verbose() {
+                            let _ = writeln!(
+                                log_dupler,
+                                "Spawned child {child:?} with PID {}",
+                                child.id()
+                            );
+                        }
+                        let wait_result = child.wait();
+                        let parent_close_requested = close::close_requested();
+                        match wait_result {
+                            Err(e) => {
                                 let _ = writeln!(
                                     log_dupler,
-                                    "Spawned child {child:?} with PID {}",
-                                    child.id()
+                                    "wait error: {e}  parent_close_requested: {parent_close_requested}"
                                 );
+                                return Err("Problem waiting for subprocess".into());
                             }
-                            let wait_result = child.wait();
-                            let parent_close_requested = close::close_requested();
-                            match wait_result {
-                                Err(e) => {
-                                    let _ =
-                                        writeln!(log_dupler,
-                                        "wait error: {e}  parent_close_requested: {parent_close_requested}"
+                            Ok(exit_status) => {
+                                if env.verbose() {
+                                    let _ = writeln!(
+                                        log_dupler,
+                                        "Subprocess status {exit_status} parent_close_requested {parent_close_requested}"
                                     );
-                                    return Err("Problem waiting for subprocess".into());
                                 }
-                                Ok(exit_status) => {
-                                    if env.verbose() {
-                                        let _ = writeln!(log_dupler, "Subprocess status {exit_status} parent_close_requested {parent_close_requested}");
+                                match exit_status.code() {
+                                    None => {
+                                        return Err("Exit code of test process not available".into());
                                     }
-                                    match exit_status.code() {
-                                        None => {
+                                    Some(subprocess_code) => {
+                                        main_code = subprocess_code as u8;
+                                        let strange_code = (main_code
+                                            & close::app_status::SIGNATURE_MASK)
+                                            != close::app_status::SIGNATURE;
+                                        if strange_code {
+                                            let _ = writeln!(
+                                                log_dupler,
+                                                "Unexpected code {subprocess_code}"
+                                            );
                                             return Err(
-                                                "Exit code of test process not available".into()
-                                            )
+                                                "Exit code of test process can't be interpreted"
+                                                    .into(),
+                                            );
                                         }
-                                        Some(subprocess_code) => {
-                                            main_code = subprocess_code as u8;
-                                            let strange_code = (main_code
-                                                & close::app_status::SIGNATURE_MASK)
-                                                != close::app_status::SIGNATURE;
-                                            if strange_code {
+                                        if main_code
+                                            == (close::app_status::SIGNATURE
+                                                | close::app_status::RUNTIME_ABORT)
+                                        {
+                                            mode = SubprocessMode::FailedRetryLowerMemory;
+                                        } else {
+                                            mode = SubprocessMode::DoneOrFailedNoretry;
+                                            if !parent_close_requested
+                                                && !close::check_any_bits_set(
+                                                    main_code,
+                                                    close::app_status::QUIT_JOB_REQUESTED,
+                                                )
+                                            {
                                                 let _ = writeln!(
                                                     log_dupler,
-                                                    "Unexpected code {subprocess_code}"
+                                                    "Seems child exited for no reason, code {subprocess_code}"
                                                 );
-                                                return Err(
-                                                    "Exit code of test process can't be interpreted".into(),
-                                                );
-                                            }
-                                            if main_code
-                                                == (close::app_status::SIGNATURE
-                                                    | close::app_status::RUNTIME_ABORT)
-                                            {
-                                                mode = SubprocessMode::FailedRetryLowerMemory;
-                                            } else {
-                                                mode = SubprocessMode::DoneOrFailedNoretry;
-                                                if !parent_close_requested
-                                                    && !close::check_any_bits_set(
-                                                        main_code,
-                                                        close::app_status::QUIT_JOB_REQUESTED,
-                                                    )
-                                                {
-                                                    let _ = writeln!(log_dupler, "Seems child exited for no reason, code {subprocess_code}");
-                                                    main_code |= close::app_status::RUNTIME_ABORT;
-                                                }
+                                                main_code |= close::app_status::RUNTIME_ABORT;
                                             }
                                         }
                                     }
@@ -1658,7 +1673,7 @@ fn test_selected_label<Writer: std::io::Write>(
                                         | (close::fetch_status()
                                             & close::app_status::QUIT_JOB_REQUESTED),
                                 },
-                            ))
+                            ));
                         }
                     }
                 }
@@ -1768,10 +1783,9 @@ fn init_running_env() -> ProcessEnv {
         if let Some(file_stem) = std::path::PathBuf::from(&argv0)
             .file_stem()
             .and_then(|os_str| os_str.to_str())
+            && file_stem.to_ascii_lowercase().contains("verbose")
         {
-            if file_stem.to_ascii_lowercase().contains("verbose") {
-                process_env.make_verbose();
-            }
+            process_env.make_verbose();
         }
         process_env.argv0 = Some(argv0);
         process_env.interactive = true;
@@ -1788,10 +1802,9 @@ fn init_running_env() -> ProcessEnv {
                 .next()
                 .as_ref()
                 .and_then(|os_str| os_str.to_str())
+                && let Ok(mem_max_parsed) = argv2_mem_max_str.parse::<i64>()
             {
-                if let Ok(mem_max_parsed) = argv2_mem_max_str.parse::<i64>() {
-                    process_env.set_mem_budget_limit(mem_max_parsed);
-                }
+                process_env.set_mem_budget_limit(mem_max_parsed);
             }
         }
     }

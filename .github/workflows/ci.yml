@@ -20,7 +20,7 @@ jobs:
             !target/artifacts/
             /cargo/registry/cache/
             /cargo/registry/src/
-      - uses: docker://ghcr.io/galkinvv/manycross2014:rust-1.77.2
+      - uses: docker://ghcr.io/galkinvv/manycross2014:rust-1.89.0
         with:
           entrypoint: ./build-artifacts.sh
       - uses: actions/upload-artifact@v4

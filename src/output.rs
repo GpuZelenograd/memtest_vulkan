@@ -1,5 +1,4 @@
 use core::fmt;
-use fs4::fs_std::FileExt;
 use std::{
     collections::VecDeque,
     fs::File,
@@ -12,7 +11,7 @@ pub struct FileLock<'a>(pub &'a File);
 
 impl<'a> FileLock<'a> {
     pub fn wrap_exclusive(f: &'a File) -> io::Result<Self> {
-        f.lock_exclusive()?;
+        f.lock()?;
         Ok(Self(f))
     }
 }
@@ -78,15 +77,15 @@ impl<Writer: io::Write> LogDupler<Writer> {
         }
     }
     fn try_open(&mut self) -> bool {
-        if self.log_file.is_none() {
-            if let Some(name) = &self.log_file_name {
-                self.log_file = std::fs::OpenOptions::new()
-                    .read(true)
-                    .append(true)
-                    .create(true)
-                    .open(name)
-                    .ok();
-            }
+        if self.log_file.is_none()
+            && let Some(name) = &self.log_file_name
+        {
+            self.log_file = std::fs::OpenOptions::new()
+                .read(true)
+                .append(true)
+                .create(true)
+                .open(name)
+                .ok();
         }
         self.log_file.is_some()
     }
@@ -95,23 +94,23 @@ impl<Writer: io::Write> LogDupler<Writer> {
         self.try_open();
         let mut kept_buf = Vec::<_>::new();
 
-        if let Some(file) = &self.log_file {
-            if let Ok(mut locked) = FileLock::wrap_exclusive(file) {
-                let _ = locked.write_all(&self.unlogged_buffer.make_contiguous()[..len]);
-                if let Ok(metadata) = locked.metadata() {
-                    let current_len = metadata.len();
-                    if current_len > self.max_size {
-                        let cut_len = current_len - self.max_size / 2u64;
-                        if locked.seek(SeekFrom::Start(cut_len)).is_ok()
-                            && locked.read_to_end(&mut kept_buf).is_err()
-                        {
-                            kept_buf.clear();
-                            let _ = locked.seek(SeekFrom::End(0));
-                        }
+        if let Some(file) = &self.log_file
+            && let Ok(mut locked) = FileLock::wrap_exclusive(file)
+        {
+            let _ = locked.write_all(&self.unlogged_buffer.make_contiguous()[..len]);
+            if let Ok(metadata) = locked.metadata() {
+                let current_len = metadata.len();
+                if current_len > self.max_size {
+                    let cut_len = current_len - self.max_size / 2u64;
+                    if locked.seek(SeekFrom::Start(cut_len)).is_ok()
+                        && locked.read_to_end(&mut kept_buf).is_err()
+                    {
+                        kept_buf.clear();
+                        let _ = locked.seek(SeekFrom::End(0));
                     }
                 }
-                drop(locked);
             }
+            drop(locked);
         }
         self.unlogged_buffer.drain(..len);
         if kept_buf.is_empty() {
@@ -129,20 +128,18 @@ impl<Writer: io::Write> LogDupler<Writer> {
             drop(file_to_truncate);
         }
         self.try_open();
-        if let Some(file) = &self.log_file {
-            if let Ok(mut locked) = FileLock::wrap_exclusive(file) {
-                if locked.rewind().is_ok()
-                    && write!(locked, "... earlier log truncated at {}", NowTime).is_ok()
-                {
-                    let _ = {
-                        if let Some(line_end_pos) = kept_buf.iter().position(|c| c == &b'\n') {
-                            locked.write_all(&kept_buf[line_end_pos..])
-                        } else {
-                            writeln!(locked)
-                        }
-                    };
+        if let Some(file) = &self.log_file
+            && let Ok(mut locked) = FileLock::wrap_exclusive(file)
+            && locked.rewind().is_ok()
+            && write!(locked, "... earlier log truncated at {}", NowTime).is_ok()
+        {
+            let _ = {
+                if let Some(line_end_pos) = kept_buf.iter().position(|c| c == &b'\n') {
+                    locked.write_all(&kept_buf[line_end_pos..])
+                } else {
+                    writeln!(locked)
                 }
-            }
+            };
         }
     }
 }
@@ -153,10 +150,10 @@ impl<Writer: io::Write> Drop for LogDupler<Writer> {
         let _ = writeln!(&mut final_buf, "logging finished at {}", NowTime);
         self.unlogged_buffer.extend(final_buf);
         let _ = self.flush();
-        if let Some(file) = &self.log_file {
-            if let Ok(locked) = FileLock::wrap_exclusive(file) {
-                let _ = locked.sync_all();
-            }
+        if let Some(file) = &self.log_file
+            && let Ok(locked) = FileLock::wrap_exclusive(file)
+        {
+            let _ = locked.sync_all();
         }
     }
 }
