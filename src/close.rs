@@ -17,6 +17,10 @@ pub fn raise_status_bit(bit: u8) {
     APP_STATUS.fetch_or(bit, SeqCst);
 }
 
+fn drop_status_bit(bit: u8) {
+    APP_STATUS.fetch_and(!bit, SeqCst);
+}
+
 pub fn fetch_status() -> u8 {
     APP_STATUS.load(SeqCst) & !app_status::SIGNATURE_MASK
 }
@@ -54,6 +58,12 @@ fn report_interrupt_request(quit_job: bool) {
         immediate_exit(false)
     }
     INTERRUPT_REQUESTED.swap(true, SeqCst);
+}
+
+// This function can't gaurantee that graceful handler would not be run since it maybe already running.
+// But it would try to avoid graceful handlers
+pub fn prefer_immediate_to_graceful() {
+    drop_status_bit(app_status::USE_GRACEFUL_HANDLER)
 }
 
 pub fn setup_handler(graceful: bool) {
