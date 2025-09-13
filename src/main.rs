@@ -489,11 +489,9 @@ unsafe extern "system" fn debug_callback(
     p_callback_data: *const vk::DebugUtilsMessengerCallbackDataEXT,
     _p_user_data: *mut c_void,
 ) -> vk::Bool32 {
-    eprintln!(
-        "{}",
-        CStr::from_ptr((*p_callback_data).p_message).to_string_lossy()
-    );
+    let cstr_message = unsafe {CStr::from_ptr((*p_callback_data).p_message)};
 
+    eprintln!("{}", cstr_message.to_string_lossy());
     vk::FALSE
 }
 fn memory_requirements(
@@ -1156,7 +1154,8 @@ fn load_instance<Writer: std::io::Write>(
 > {
     let override_vk_loader_debug = env::var_os(VK_LOADER_DEBUG).is_none();
     if env.verbose() && override_vk_loader_debug {
-        env::set_var(VK_LOADER_DEBUG, "error,warn");
+        // memtest_vulkan is single-threaded during init.
+        unsafe { env::set_var(VK_LOADER_DEBUG, "error,warn") };
     }
 
     let mut entry = new_loader()?;
@@ -1263,8 +1262,9 @@ fn load_instance<Writer: std::io::Write>(
                 return Err(e);
             }
             drop(entry);
-            //retry instance creation with loader debuf enabled
-            env::set_var(VK_LOADER_DEBUG, "all");
+            //retry instance creation with loader debug enabled
+            // memtest_vulkan is single-threaded during init.
+            unsafe { env::set_var(VK_LOADER_DEBUG, "all") };
             entry = new_loader()?;
             let debug_instance_try = unsafe {
                 InstanceLoader::new(

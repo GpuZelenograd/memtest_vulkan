@@ -1,5 +1,5 @@
 [package]
-edition = '2021'
+edition = '2024'
 name = 'memtest_vulkan_build'
 version = '0.0.0'
 

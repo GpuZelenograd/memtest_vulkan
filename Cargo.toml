@@ -2,7 +2,7 @@
 #cargo fmt
 
 [package]
-edition = '2021'
+edition = '2024'
 name = 'memtest_vulkan'
 version = '0.6.0'
 
