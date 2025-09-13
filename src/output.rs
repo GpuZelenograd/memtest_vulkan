@@ -1,5 +1,4 @@
 use core::fmt;
-use fs4::fs_std::FileExt;
 use std::{
     collections::VecDeque,
     fs::File,
@@ -12,7 +11,7 @@ pub struct FileLock<'a>(pub &'a File);
 
 impl<'a> FileLock<'a> {
     pub fn wrap_exclusive(f: &'a File) -> io::Result<Self> {
-        f.lock_exclusive()?;
+        f.lock()?;
         Ok(Self(f))
     }
 }

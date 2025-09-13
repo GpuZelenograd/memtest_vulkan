@@ -499,7 +499,7 @@ unsafe extern "system" fn debug_callback(
 fn memory_requirements(
     device: &erupt::DeviceLoader,
     min_wanted_allocation: i64,
-) -> Result<(vk::MemoryRequirements, vk::BufferCreateInfoBuilder), Box<dyn std::error::Error>> {
+) -> Result<(vk::MemoryRequirements, vk::BufferCreateInfoBuilder<'_>), Box<dyn std::error::Error>> {
     let test_buffer_create_info = vk::BufferCreateInfoBuilder::new()
         .sharing_mode(vk::SharingMode::EXCLUSIVE)
         .usage(vk::BufferUsageFlags::STORAGE_BUFFER)
