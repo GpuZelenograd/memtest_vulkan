@@ -176,11 +176,11 @@ impl Drop for Reader {
         if crate::close::close_requested() {
             return; //don't touch console methods while closing
         }
-        if let Some(terminal) = &mut self.terminal {
-            if let Some(state) = self.prepare_state.take() {
-                let _ = terminal.set_fg(None);
-                let _ = terminal.restore(state);
-            }
+        if let Some(terminal) = &mut self.terminal
+            && let Some(state) = self.prepare_state.take()
+        {
+            let _ = terminal.set_fg(None);
+            let _ = terminal.restore(state);
         }
     }
 }

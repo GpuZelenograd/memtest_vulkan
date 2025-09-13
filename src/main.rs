@@ -1288,7 +1288,7 @@ struct LoadedDevices {
 
 impl LoadedDevices {
     pub fn instance(&self) -> &erupt::InstanceLoader {
-        &self.instance.as_ref().unwrap()
+        self.instance.as_ref().unwrap()
     }
     pub fn new(
         instance: erupt::InstanceLoader,
@@ -1555,69 +1555,67 @@ fn test_selected_label<Writer: std::io::Write>(
                 let mut main_code: u8 = 0;
                 loop {
                     mode = SubprocessMode::NotExeced;
-                    if let Some(argv0) = &env.argv0 {
-                        if let Ok(mut child) = std::process::Command::new(argv0)
+                    if let Some(argv0) = &env.argv0
+                        && let Ok(mut child) = std::process::Command::new(argv0)
                             .arg((-1 - (single_dev.index_in_device_iteration as isize)).to_string())
                             .arg(env.max_test_bytes.load(SeqCst).to_string())
                             .spawn()
-                        {
-                            if env.verbose() {
-                                let _ = writeln!(
-                                    log_dupler,
-                                    "Spawned child {child:?} with PID {}",
-                                    child.id()
-                                );
-                            }
-                            let wait_result = child.wait();
-                            let parent_close_requested = close::close_requested();
-                            match wait_result {
-                                Err(e) => {
-                                    let _ =
+                    {
+                        if env.verbose() {
+                            let _ = writeln!(
+                                log_dupler,
+                                "Spawned child {child:?} with PID {}",
+                                child.id()
+                            );
+                        }
+                        let wait_result = child.wait();
+                        let parent_close_requested = close::close_requested();
+                        match wait_result {
+                            Err(e) => {
+                                let _ =
                                         writeln!(log_dupler,
                                         "wait error: {e}  parent_close_requested: {parent_close_requested}"
                                     );
-                                    return Err("Problem waiting for subprocess".into());
+                                return Err("Problem waiting for subprocess".into());
+                            }
+                            Ok(exit_status) => {
+                                if env.verbose() {
+                                    let _ = writeln!(log_dupler, "Subprocess status {exit_status} parent_close_requested {parent_close_requested}");
                                 }
-                                Ok(exit_status) => {
-                                    if env.verbose() {
-                                        let _ = writeln!(log_dupler, "Subprocess status {exit_status} parent_close_requested {parent_close_requested}");
+                                match exit_status.code() {
+                                    None => {
+                                        return Err("Exit code of test process not available".into())
                                     }
-                                    match exit_status.code() {
-                                        None => {
+                                    Some(subprocess_code) => {
+                                        main_code = subprocess_code as u8;
+                                        let strange_code = (main_code
+                                            & close::app_status::SIGNATURE_MASK)
+                                            != close::app_status::SIGNATURE;
+                                        if strange_code {
+                                            let _ = writeln!(
+                                                log_dupler,
+                                                "Unexpected code {subprocess_code}"
+                                            );
                                             return Err(
-                                                "Exit code of test process not available".into()
-                                            )
+                                                "Exit code of test process can't be interpreted"
+                                                    .into(),
+                                            );
                                         }
-                                        Some(subprocess_code) => {
-                                            main_code = subprocess_code as u8;
-                                            let strange_code = (main_code
-                                                & close::app_status::SIGNATURE_MASK)
-                                                != close::app_status::SIGNATURE;
-                                            if strange_code {
-                                                let _ = writeln!(
-                                                    log_dupler,
-                                                    "Unexpected code {subprocess_code}"
-                                                );
-                                                return Err(
-                                                    "Exit code of test process can't be interpreted".into(),
-                                                );
-                                            }
-                                            if main_code
-                                                == (close::app_status::SIGNATURE
-                                                    | close::app_status::RUNTIME_ABORT)
+                                        if main_code
+                                            == (close::app_status::SIGNATURE
+                                                | close::app_status::RUNTIME_ABORT)
+                                        {
+                                            mode = SubprocessMode::FailedRetryLowerMemory;
+                                        } else {
+                                            mode = SubprocessMode::DoneOrFailedNoretry;
+                                            if !parent_close_requested
+                                                && !close::check_any_bits_set(
+                                                    main_code,
+                                                    close::app_status::QUIT_JOB_REQUESTED,
+                                                )
                                             {
-                                                mode = SubprocessMode::FailedRetryLowerMemory;
-                                            } else {
-                                                mode = SubprocessMode::DoneOrFailedNoretry;
-                                                if !parent_close_requested
-                                                    && !close::check_any_bits_set(
-                                                        main_code,
-                                                        close::app_status::QUIT_JOB_REQUESTED,
-                                                    )
-                                                {
-                                                    let _ = writeln!(log_dupler, "Seems child exited for no reason, code {subprocess_code}");
-                                                    main_code |= close::app_status::RUNTIME_ABORT;
-                                                }
+                                                let _ = writeln!(log_dupler, "Seems child exited for no reason, code {subprocess_code}");
+                                                main_code |= close::app_status::RUNTIME_ABORT;
                                             }
                                         }
                                     }
@@ -1768,10 +1766,9 @@ fn init_running_env() -> ProcessEnv {
         if let Some(file_stem) = std::path::PathBuf::from(&argv0)
             .file_stem()
             .and_then(|os_str| os_str.to_str())
+            && file_stem.to_ascii_lowercase().contains("verbose")
         {
-            if file_stem.to_ascii_lowercase().contains("verbose") {
-                process_env.make_verbose();
-            }
+            process_env.make_verbose();
         }
         process_env.argv0 = Some(argv0);
         process_env.interactive = true;
@@ -1788,10 +1785,9 @@ fn init_running_env() -> ProcessEnv {
                 .next()
                 .as_ref()
                 .and_then(|os_str| os_str.to_str())
+                && let Ok(mem_max_parsed) = argv2_mem_max_str.parse::<i64>()
             {
-                if let Ok(mem_max_parsed) = argv2_mem_max_str.parse::<i64>() {
-                    process_env.set_mem_budget_limit(mem_max_parsed);
-                }
+                process_env.set_mem_budget_limit(mem_max_parsed);
             }
         }
     }
