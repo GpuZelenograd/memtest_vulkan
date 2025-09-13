@@ -489,7 +489,7 @@ unsafe extern "system" fn debug_callback(
     p_callback_data: *const vk::DebugUtilsMessengerCallbackDataEXT,
     _p_user_data: *mut c_void,
 ) -> vk::Bool32 {
-    let cstr_message = unsafe {CStr::from_ptr((*p_callback_data).p_message)};
+    let cstr_message = unsafe { CStr::from_ptr((*p_callback_data).p_message) };
 
     eprintln!("{}", cstr_message.to_string_lossy());
     vk::FALSE
