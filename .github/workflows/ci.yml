@@ -22,12 +22,18 @@ jobs:
             /cargo/registry/src/
       - uses: docker://ghcr.io/galkinvv/manycross2014:rust-1.89.0
         with:
-          entrypoint: ./build-artifacts.sh
+          entrypoint: ./run-build.sh
       - uses: actions/upload-artifact@v4
+        if: always()
         with:
           name: Windows .exe
           path: target/artifacts/*.exe
       - uses: actions/upload-artifact@v4
+        if: always()
         with:
           name: Linux binaries (x86_64 and aarch64)
           path: target/artifacts/*Linux*
+      - uses: docker://ghcr.io/galkinvv/manycross2014:rust-1.89.0
+        if: always()
+        with:
+          entrypoint: ./run-lint.sh
