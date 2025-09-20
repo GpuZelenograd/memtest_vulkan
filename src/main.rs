@@ -2,6 +2,7 @@ mod close;
 mod erupt_vendored_utils_loading;
 mod input;
 mod output;
+mod ram;
 
 pub use erupt::{CustomEntryLoader, LoaderError}; // republish for vendored part
 
@@ -980,12 +981,23 @@ fn test_device<Writer: std::io::Write>(
                 }
             }
             Ok(virt_address) => {
+                let phys_cpu_side = ram::virtual_to_physical_for_self_process(virt_address);
                 unsafe { device.unmap_memory(test_memory.unwrap()) }; // After getting addresses the actual mapping is not needed anymore
-                writeln!(
-                    log_dupler,
-                    "CPU address of tested memory: virtual {:X}",
-                    virt_address.addr()
-                )?;
+                match phys_cpu_side {
+                    None => writeln!(
+                        log_dupler,
+                        "CPU address of tested memory: virtual=x{:0pw$X}",
+                        virt_address.addr(),
+                        pw = ram::POINTER_HEX_PRINT_WIDTH
+                    )?,
+                    Some(phys_address) => writeln!(
+                        log_dupler,
+                        "CPU address of tested memory: virtual=x{:0pw$X} physical=x{:0pw$X}",
+                        virt_address.addr(),
+                        phys_address,
+                        pw = ram::POINTER_HEX_PRINT_WIDTH
+                    )?,
+                }
             }
         }
     }

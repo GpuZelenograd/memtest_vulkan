@@ -102,7 +102,7 @@ pub fn setup_handler_impl() {
     extern "C" fn os_handler(
         sig: nix::libc::c_int,
         _: *mut nix::libc::siginfo_t,
-        _: *mut nix::libc::c_void,
+        _: *mut core::ffi::c_void,
     ) {
         let quit_job = sig != nix::libc::SIGINT;
         report_interrupt_request(quit_job);
