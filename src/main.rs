@@ -185,6 +185,8 @@ const TEST_DATA_KEEP_FREE: i64 = 400 * 1024 * 1024;
 const MIN_WANTED_ALLOCATION: i64 = TEST_DATA_KEEP_FREE;
 const ALLOCATION_TRY_STEP: i64 = TEST_DATA_KEEP_FREE;
 
+const MAP_FOR_GETTING_ADDRESS_SIZE: u64 = 2 * 1024 * 1024; // signle huge page
+
 struct ComputePipelines {
     read: vk::Pipeline,
     #[allow(dead_code)]
@@ -192,7 +194,6 @@ struct ComputePipelines {
     #[allow(dead_code)]
     emulate_write_bugs: vk::Pipeline,
 }
-
 #[derive(Default)]
 struct U64HexDebug(i64);
 
@@ -756,13 +757,10 @@ fn test_device<Writer: std::io::Write>(
     let io_memory =
         unsafe { device.allocate_memory(&io_memory_allocate_info, None) }.err_as_str()?;
 
-    let mapped: *mut IOBuf = unsafe {
-        mem::transmute(
-            device
-                .map_memory(io_memory, 0, vk::WHOLE_SIZE, vk::MemoryMapFlags::default())
-                .err_as_str()?,
-        )
-    };
+    let mapped: *mut IOBuf =
+        unsafe { device.map_memory(io_memory, 0, vk::WHOLE_SIZE, vk::MemoryMapFlags::default()) }
+            .err_as_str()?
+            .cast::<IOBuf>();
     unsafe { device.bind_buffer_memory(io_buffer, io_memory, 0) }
         .err_as_str_context("bind_buffer_memory")?;
 
@@ -961,15 +959,46 @@ fn test_device<Writer: std::io::Write>(
         allocation_size -= ALLOCATION_TRY_STEP;
     }
 
+    let test_memory_type = memory_props.memory_types[test_mem_index as usize];
+    if test_memory_type
+        .property_flags
+        .contains(vk::MemoryPropertyFlags::HOST_VISIBLE)
+    {
+        match unsafe {
+            device.map_memory(
+                test_memory.unwrap(),
+                0,
+                MAP_FOR_GETTING_ADDRESS_SIZE,
+                vk::MemoryMapFlags::default(),
+            )
+        }
+        .err_as_str()
+        {
+            Err(e) => {
+                if env.verbose() {
+                    let _ = writeln!(log_dupler, "Failed getting virtual address due to {e}");
+                }
+            }
+            Ok(virt_address) => {
+                unsafe { device.unmap_memory(test_memory.unwrap()) }; // After getting addresses the actual mapping is not needed anymore
+                writeln!(
+                    log_dupler,
+                    "CPU address of tested memory: virtual {:X}",
+                    virt_address.addr()
+                )?;
+            }
+        }
+    }
+
     if env.verbose() {
         let _ = writeln!(
             log_dupler,
-            "Test memory size {:5.1}GB   type {:2}: {:?} {:?}",
+            "Test memory size {:5.1}GB   type {:2}: {:?} {:?} suitable 0b{:032b}",
             allocation_size as f32 / GB,
             test_mem_index,
-            memory_props.memory_types[test_mem_index as usize],
-            memory_props.memory_heaps
-                [memory_props.memory_types[test_mem_index as usize].heap_index as usize]
+            test_memory_type,
+            memory_props.memory_heaps[test_memory_type.heap_index as usize],
+            test_mem_reqs.memory_type_bits
         );
     }
 
