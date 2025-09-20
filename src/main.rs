@@ -770,20 +770,28 @@ fn test_device<Writer: std::io::Write>(
         memory_requirements(device, MIN_WANTED_ALLOCATION)?;
 
     let test_mem_index = (0..memory_props.memory_type_count)
-        .filter(|i| {
+        .filter(|mem_index| {
             //test buffer comptibility flags expressed as bitmask
-            let suitable = (test_mem_reqs.memory_type_bits & (1 << i)) != 0;
-            let memory_type = memory_props.memory_types[*i as usize];
+            let memory_type = memory_props.memory_types[*mem_index as usize];
+            let suitable = (test_mem_reqs.memory_type_bits & (1 << mem_index)) != 0;
             suitable
                 && memory_type
                     .property_flags
                     .contains(vk::MemoryPropertyFlags::DEVICE_LOCAL)
         })
         .max_by_key(|mem_index| {
-            let mem_type = memory_props.memory_types[*mem_index as usize];
-            let heap_size = memory_props.memory_heaps[mem_type.heap_index as usize].size;
-            // Among greatest heap_size select index with the minimum count of unknown flags
-            (heap_size, std::cmp::Reverse(mem_type.property_flags))
+            let memory_type = memory_props.memory_types[*mem_index as usize];
+            let heap_size = memory_props.memory_heaps[memory_type.heap_index as usize].size;
+            // Among greatest heap_size select index with HOST_VISIBLE flag if it is available,
+            // but with the minimum count of other flags and minimal index
+            (
+                heap_size,
+                memory_type
+                    .property_flags
+                    .contains(vk::MemoryPropertyFlags::HOST_VISIBLE),
+                std::cmp::Reverse(memory_type.property_flags),
+                std::cmp::Reverse(*mem_index),
+            )
         })
         .ok_or("DEVICE_LOCAL test memory type not available")?;
 
