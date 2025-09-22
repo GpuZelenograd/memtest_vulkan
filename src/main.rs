@@ -1446,11 +1446,12 @@ fn list_devices_ordered_labaled_from_1<Writer: std::io::Write>(
         })
         .collect();
     compute_capable_devices.sort_by_key(|(_, _, props, pci_props, _, _, _)| {
-        let negative_bus_for_reverse_ordering = -(pci_props.pci_bus as i32);
+        // assuming that for multi-GPU scenarious the minimal PCIe bus number is used for picture output
+        // and the maximal is the test target select by default "the descrete GPU with maximal PCIe bus number"
         match props.device_type {
-            vk::PhysicalDeviceType::DISCRETE_GPU => (0, negative_bus_for_reverse_ordering),
-            vk::PhysicalDeviceType::INTEGRATED_GPU => (1, negative_bus_for_reverse_ordering),
-            _ => (2, negative_bus_for_reverse_ordering),
+            vk::PhysicalDeviceType::DISCRETE_GPU => (0, std::cmp::Reverse(pci_props.pci_bus)),
+            vk::PhysicalDeviceType::INTEGRATED_GPU => (1, std::cmp::Reverse(pci_props.pci_bus)),
+            _ => (2, std::cmp::Reverse(pci_props.pci_bus)),
         }
     });
     let mut numbered_devices: Vec<NamedComputeDevice> = Vec::new();
