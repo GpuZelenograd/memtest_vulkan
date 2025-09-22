@@ -569,6 +569,12 @@ fn try_fill_default_mem_budget<Writer: std::io::Write>(
         if budget > 0 {
             heap_free = min(heap_free, budget);
         }
+        if selected_device.physical_props.device_type != vk::PhysicalDeviceType::DISCRETE_GPU {
+            // for non-descrete GPUs consult the system free memory
+            if let Some(ram_budget) = ram::budget() {
+                heap_free = min(heap_free, ram_budget as i64);
+            }
+        }
         max_budget.max_assign(heap_free - TEST_DATA_KEEP_FREE);
     }
     env.set_mem_budget_limit(max_budget);
@@ -1196,6 +1202,7 @@ struct NamedComputeDevice {
     label: String,
     physical_device: vk::PhysicalDevice,
     queue_family_index: u32,
+    physical_props: vk::PhysicalDeviceProperties,
     memory_props: vk::PhysicalDeviceMemoryProperties,
     budget_props: ext_memory_budget::PhysicalDeviceMemoryBudgetPropertiesEXT,
     index_in_device_iteration: usize,
@@ -1501,6 +1508,7 @@ fn list_devices_ordered_labaled_from_1<Writer: std::io::Write>(
             ),
             physical_device: d.0,
             queue_family_index: d.1,
+            physical_props: props,
             memory_props,
             budget_props: d.5,
             index_in_device_iteration: d.6,
