@@ -235,8 +235,13 @@ If nothing helps - enable verbose mode by renaming the executable to `memtest_vu
 </summary>
 New ideas in the form of [suggestions via creating issues](https://github.com/GpuZelenograd/memtest_vulkan/issues) or pull requests are welcome. However, note that the tool is designed to be cross-platform, so an optimal way to add temperature and hardware monitoring is [relying on VK_KHR_performance_query extension](https://registry.khronos.org/vulkan/specs/1.3-extensions/man/html/VkPerformanceCounterUnitKHR.html), but unfortunately this extension isn't widely supported by 2022.
 
+Note that portability is limited to 64-bit targets. Building versions for 32-bit targets was never tried, and all notices below assume 64-bit targets.
+
 If you want to experiment with code modifications, there are two ways to do this:
  - the classic way of cloning repo, editing code and use locally-installed `cargo` to build binaries from modified rust source code
+      - for cross-building to windows from linux the `x86_64-w64-mingw32-gcc` linker is used, for ubuntu the `gcc-mingw-w64-x86-64-win32` package provides it.
+      - for cross-building to arm linux from other arhitectures the `aarch64-linux-gnu-gcc` linker is used, for ubuntu the `gcc-aarch64-linux-gnu` package provides it.
+      - as an alternative a [docker container suitable for rust crossbuilding](https://github.com/galkinvv/manycross2014/pkgs/container/manycross2014) can be used, this is even required for targeting x86_64-win7-windows-gnu Windows7-compatible target. It provides preinstalled rust targets for all build varints mentioned in `./run-build.sh`.
  - or the "fast way to make a small change relying on the github infrastructure". This can be useful if you are not familiar with building rust and don't plan to install it locally
       - fork this repository
       - enable workflows on the actions tab of the forked repository
