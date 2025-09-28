@@ -5,15 +5,20 @@ pub fn budget() -> Option<usize> {
 }
 
 #[cfg(target_os = "linux")]
-pub fn virtual_to_physical_for_self_process(
+pub fn virt_addr_details(
     #[expect(unused)] virt_addr: *const core::ffi::c_void,
-) -> Option<usize> {
+    device_type: erupt::vk::PhysicalDeviceType,
+) -> Option<String> {
+    if device_type == erupt::vk::PhysicalDeviceType::DISCRETE_GPU {
+        return None;
+    }
     None
 }
 
 #[cfg(not(target_os = "linux"))]
-pub fn virtual_to_physical_for_self_process(
+pub fn virt_addr_details(
     #[expect(unused)] virt_addr: *const core::ffi::c_void,
-) -> Option<usize> {
+    #[expect(unused)] device_type: erupt::vk::PhysicalDeviceType,
+) -> Option<String> {
     None
 }

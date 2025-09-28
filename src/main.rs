@@ -692,6 +692,7 @@ fn prepare_and_test_device<Writer: std::io::Write>(
         log_dupler,
         &selected.label,
         selected.memory_props,
+        selected.physical_props,
         env,
     ) {
         display_this_process_result(Some(e), env)
@@ -709,6 +710,7 @@ fn test_device<Writer: std::io::Write>(
     log_dupler: &mut output::LogDupler<Writer>,
     selected_label: &String,
     memory_props: vk::PhysicalDeviceMemoryProperties,
+    physical_props: vk::PhysicalDeviceProperties,
     env: &ProcessEnv,
 ) -> Result<(), Box<dyn std::error::Error>> {
     let mut allocation_size = env.max_test_bytes.load(SeqCst);
@@ -987,22 +989,16 @@ fn test_device<Writer: std::io::Write>(
                 }
             }
             Ok(virt_address) => {
-                let phys_cpu_side = ram::virtual_to_physical_for_self_process(virt_address);
+                let addr_details = ram::virt_addr_details(virt_address, physical_props.device_type);
                 unsafe { device.unmap_memory(test_memory.unwrap()) }; // After getting addresses the actual mapping is not needed anymore
-                match phys_cpu_side {
-                    None => writeln!(
+                if let Some(details) = addr_details {
+                    writeln!(
                         log_dupler,
-                        "CPU address of tested memory: virtual=x{:0pw$X}",
+                        "CPU address of tested memory: virtual=x{:0pw$X} {}",
                         virt_address.addr(),
+                        details,
                         pw = ram::POINTER_HEX_PRINT_WIDTH
-                    )?,
-                    Some(phys_address) => writeln!(
-                        log_dupler,
-                        "CPU address of tested memory: virtual=x{:0pw$X} physical=x{:0pw$X}",
-                        virt_address.addr(),
-                        phys_address,
-                        pw = ram::POINTER_HEX_PRINT_WIDTH
-                    )?,
+                    )?
                 }
             }
         }
