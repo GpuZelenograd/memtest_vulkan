@@ -1291,6 +1291,7 @@ fn load_instance<Writer: std::io::Write>(
                 severity |= ext_debug_utils::DebugUtilsMessageSeverityFlagsEXT::INFO_EXT;
                 //lists all extensions, very verbose
                 //severity |= ext_debug_utils::DebugUtilsMessageSeverityFlagsEXT::VERBOSE_EXT;
+                let _ = writeln!(log_dupler, "DebugUtilsMessenger with seveity {severity:?}");
             }
             let create_info = ext_debug_utils::DebugUtilsMessengerCreateInfoEXTBuilder::new()
                 .message_severity(severity)
