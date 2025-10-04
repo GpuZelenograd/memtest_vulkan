@@ -5,6 +5,7 @@
 edition = '2024'
 name = 'memtest_vulkan'
 version = '0.6.0'
+rust-version = "1.89"
 
 [dependencies]
 byte-strings = '0.3.1'
