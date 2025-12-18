@@ -487,6 +487,16 @@ impl<T> MapErrRetryWithLowerMemory for erupt::utils::VulkanResult<T> {
     }
 }
 
+fn map_not_ready_to_false(
+    vk_result: erupt::utils::VulkanResult<()>,
+) -> erupt::utils::VulkanResult<bool> {
+    if vk_result.raw == vk::Result::NOT_READY {
+        erupt::utils::VulkanResult::new(vk::Result::SUCCESS, false)
+    } else {
+        erupt::utils::VulkanResult::new(vk_result.raw, true)
+    }
+}
+
 unsafe extern "system" fn debug_callback(
     _message_severity: vk::DebugUtilsMessageSeverityFlagBitsEXT,
     _message_types: vk::DebugUtilsMessageTypeFlagsEXT,
@@ -823,6 +833,12 @@ fn test_device<Writer: std::io::Write>(
     let submit_info = &[vk::SubmitInfoBuilder::new().command_buffers(&cmd_bufs)];
     //all preparations except huge buffer allocation done. Now allocate huge buffer as a last step to minize chance of allocation failure for small structures
 
+    //by default load cpu for faster wait on platforms where cpu load shouldn't affect cpu speed.
+    let load_cpu_during_wait = physical_props.device_type == vk::PhysicalDeviceType::DISCRETE_GPU
+        && std::env::consts::ARCH == "x86_64";
+    // but this may be override from environment var_os
+    let load_cpu_during_wait = env::var("MEMTEST_VULKAN_EMULATE_LOAD_CPU_DURING_WAIT")
+        .map_or(load_cpu_during_wait, |s| s != "0");
     let mut test_memory = None;
     let mut test_buffer = None;
     let mut test_window_count;
@@ -914,9 +930,16 @@ fn test_device<Writer: std::io::Write>(
                                         device
                                             .queue_submit(queue, submit_info, fence)
                                             .err_retry_with_lower_memory(env, "queue_submit")?;
-                                        device
-                                            .wait_for_fences(&[fence], true, u64::MAX)
-                                            .err_retry_with_lower_memory(env, "wait_for_fences")?;
+                                        if load_cpu_during_wait {
+                                            loop {
+                                                let fence_signaled = map_not_ready_to_false(device.get_fence_status(fence)).err_retry_with_lower_memory(env, "get_fence_status")?;
+                                                if fence_signaled {break;}
+                                            }
+                                        } else {
+                                            device
+                                                .wait_for_fences(&[fence], true, u64::MAX)
+                                                .err_retry_with_lower_memory(env, "wait_for_fences")?;
+                                        }
                                         device.reset_fences(&[fence]).err_retry_with_lower_memory(env, "reset_fences")?;
                                         Ok(())
                                     }
