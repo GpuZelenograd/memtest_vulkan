@@ -356,6 +356,7 @@ impl IOBuf {
             ))
         }
     }
+    #[allow(clippy::manual_rotate)] // this is kept as similar to WGSL shader above as possible
     fn check_vec_first(&self) -> Result<(), Box<dyn std::error::Error>> {
         const TEST_IDX: u32 = 1;
         let addr: u32 = TEST_IDX * VEC_SIZE as u32 + self.calc_param + 1u32;
