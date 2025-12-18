@@ -833,12 +833,19 @@ fn test_device<Writer: std::io::Write>(
     let submit_info = &[vk::SubmitInfoBuilder::new().command_buffers(&cmd_bufs)];
     //all preparations except huge buffer allocation done. Now allocate huge buffer as a last step to minize chance of allocation failure for small structures
 
-    //by default load cpu for faster wait on platforms where cpu load shouldn't affect cpu speed.
-    let load_cpu_during_wait = physical_props.device_type == vk::PhysicalDeviceType::DISCRETE_GPU
-        && std::env::consts::ARCH == "x86_64";
+    // by default load cpu before expected fence release for faster wait on descreete GPUS where cpu load shouldn't affect gpu speed.
+    let mut percent_cpu_sleep_during_wait =
+        if physical_props.device_type == vk::PhysicalDeviceType::DISCRETE_GPU {
+            Some(80)
+        } else {
+            None
+        };
+
     // but this may be override from environment var_os
-    let load_cpu_during_wait = env::var("MEMTEST_VULKAN_EMULATE_LOAD_CPU_DURING_WAIT")
-        .map_or(load_cpu_during_wait, |s| s != "0");
+    if let Ok(percentage) = env::var("MEMTEST_VULKAN_PERCENT_CPU_SLEEP_DURING_WAIT") {
+        percent_cpu_sleep_during_wait = percentage.parse::<u64>().ok();
+    }
+
     let mut test_memory = None;
     let mut test_buffer = None;
     let mut test_window_count;
@@ -893,7 +900,7 @@ fn test_device<Writer: std::io::Write>(
                         {
                             Err(err) => last_err = err,
                             Ok(_) => {
-                                execute_wait_queue = |buf_offset: i64, pipeline: vk::Pipeline| -> Result<(), Box<dyn std::error::Error>> {
+                                execute_wait_queue = |buf_offset: i64, pipeline: vk::Pipeline, lower_time_estimation: time::Duration| -> Result<(), Box<dyn std::error::Error>> {
                                     let test_element_count = (test_window_size / ELEMENT_SIZE) as u32;
                                     unsafe {
                                         device.update_descriptor_sets(
@@ -930,7 +937,10 @@ fn test_device<Writer: std::io::Write>(
                                         device
                                             .queue_submit(queue, submit_info, fence)
                                             .err_retry_with_lower_memory(env, "queue_submit")?;
-                                        if load_cpu_during_wait {
+                                        if let Some(percentage) = percent_cpu_sleep_during_wait {
+                                            device
+                                                .wait_for_fences(&[fence], true, (lower_time_estimation.as_nanos() as u64) * percentage / 100)
+                                                .err_retry_with_lower_memory(env, "wait_for_fences_with_timeout")?;
                                             loop {
                                                 let fence_signaled = map_not_ready_to_false(device.get_fence_status(fence)).err_retry_with_lower_memory(env, "get_fence_status")?;
                                                 if fence_signaled {break;}
@@ -949,13 +959,19 @@ fn test_device<Writer: std::io::Write>(
                                 let mut overall_exec_result = Ok(());
                                 'window: for window_idx in 0..test_window_count {
                                     let test_offset = test_window_size * window_idx;
-                                    if let Err(e) = execute_wait_queue(test_offset, pipelines.write)
-                                    {
+                                    if let Err(e) = execute_wait_queue(
+                                        test_offset,
+                                        pipelines.write,
+                                        time::Duration::ZERO,
+                                    ) {
                                         overall_exec_result = Err(e);
                                         break 'window;
                                     }
-                                    if let Err(e) = execute_wait_queue(test_offset, pipelines.read)
-                                    {
+                                    if let Err(e) = execute_wait_queue(
+                                        test_offset,
+                                        pipelines.read,
+                                        time::Duration::ZERO,
+                                    ) {
                                         overall_exec_result = Err(e);
                                         break 'window;
                                     }
@@ -1056,6 +1072,8 @@ fn test_device<Writer: std::io::Write>(
     let first_iter_start = time::Instant::now();
     let mut last_status_output = first_iter_start;
     let mut last_error_state = "          NO ERRORS       ".to_owned();
+    let mut lower_write_iter_estimation = time::Duration::ZERO;
+    let mut lower_check_iter_estimation = time::Duration::ZERO;
     for iteration in 1..=iter_count {
         unsafe { std::ptr::write(mapped, buffer_in) }
         let write_start = time::Instant::now();
@@ -1071,10 +1089,12 @@ fn test_device<Writer: std::io::Write>(
                 } else {
                     pipelines.emulate_write_bugs
                 },
+                lower_write_iter_estimation / (test_window_count as u32 - 1),
             )?;
         }
         written_bytes += test_window_size * (test_window_count - 1);
-        write_duration += write_start.elapsed();
+        lower_write_iter_estimation = write_start.elapsed();
+        write_duration += lower_write_iter_estimation;
         let mut last_buffer_out: IOBuf;
         for window_idx in 0..test_window_count {
             let reread_mode_for_this_win = window_idx == 0;
@@ -1091,7 +1111,11 @@ fn test_device<Writer: std::io::Write>(
                 );
             }
             let test_offset = test_window_size * window_idx;
-            execute_wait_queue(test_offset, pipelines.read)?;
+            execute_wait_queue(
+                test_offset,
+                pipelines.read,
+                lower_check_iter_estimation / test_window_count as u32,
+            )?;
             {
                 unsafe {
                     last_buffer_out = std::ptr::read(mapped);
@@ -1127,6 +1151,7 @@ fn test_device<Writer: std::io::Write>(
         }
         read_bytes += test_window_size * test_window_count;
         let moment_iter_ends = time::Instant::now();
+        lower_check_iter_estimation = moment_iter_ends - write_start - lower_write_iter_estimation;
         let elapsed = moment_iter_ends - last_status_output;
         let stop_testing = close::close_requested();
         if elapsed > next_report_duration || stop_testing {
