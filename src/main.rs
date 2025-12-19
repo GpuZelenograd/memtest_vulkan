@@ -836,7 +836,7 @@ fn test_device<Writer: std::io::Write>(
     // by default load cpu before expected fence release for faster wait on descreete GPUS where cpu load shouldn't affect gpu speed.
     let mut percent_cpu_sleep_during_wait =
         if physical_props.device_type == vk::PhysicalDeviceType::DISCRETE_GPU {
-            Some(80)
+            Some(7) // wait_for_fences sleepage period is too rough on windows, so setting it to bigger value results in absence of busy wait
         } else {
             None
         };
