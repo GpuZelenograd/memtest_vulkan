@@ -9,7 +9,7 @@ rust-version = "1.89"
 
 [dependencies]
 byte-strings = '0.3.1'
-mortal = '0.2.4'
+mortal = { git = 'https://github.com/GpuZelenograd/mortal.git', tag = '2025-windows-sys-migration' }
 chrono = '0.4.42'
 hhmmss = '0.1.0'
 
